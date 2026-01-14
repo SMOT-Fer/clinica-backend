@@ -9,6 +9,7 @@ const appointmentRoutes = require('./routes/appointments');
 const paymentRoutes = require('./routes/payments');
 const treatmentRoutes = require('./routes/treatments');
 const auditRoutes = require('./routes/audit');
+const userRoutes = require("./routes/users");
 
 const app = express();
 
@@ -23,6 +24,8 @@ app.use('/appointments', appointmentRoutes);
 app.use('/payments', paymentRoutes);
 app.use('/treatments', treatmentRoutes);
 app.use('/audit', auditRoutes);
+app.use("/users", userRoutes);
+
 
 // Endpoint de salud
 app.get('/', (req, res) => {
