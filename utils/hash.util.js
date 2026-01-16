@@ -1,5 +1,5 @@
 // /utils/hash.util.js
-const bcrypt = require('bcrypt');
+const bcrypt = require('bcryptjs');
 
 const SALT_ROUNDS = parseInt(process.env.BCRYPT_SALT_ROUNDS, 10);
 
