@@ -1,194 +1,161 @@
-const citasDao = require('../persistence/citas.persistence');
-const citaTratamientosDao = require('../persistence/cita_tratamientos.persistence');
-const pagosDao = require('../persistence/pagos.persistence');
-const citaHistorialDao = require('../persistence/cita_historial.persistence');
-const auditoriaDao = require('../persistence/auditoria.persistence');
+// /business/citas.business.js
+const CitasDAO = require('../persistence/citas.persistence');
+const CitaTratamientosDAO = require('../persistence/cita_tratamientos.persistence');
+const CitaHistorialDAO = require('../persistence/cita_historial.persistence');
 
-/**
- * Crear cita completa:
- * - crea cita
- * - agrega tratamientos
- * - calcula total
- * - crea pago pendiente
- * - audita
- */
-async function createCitaCompleta({
-  clinic_id,
-  paciente_id,
-  doctor_id,
-  fecha,
-  hora,
-  detalles,
-  tratamientos,
-  usuario_id
-}) {
-  if (!tratamientos || tratamientos.length === 0) {
-    throw new Error('La cita debe tener al menos un tratamiento');
-  }
+const Cita = require('../model/citas.model');
+const CitaTratamiento = require('../model/cita_tratamientos.model');
+const CitaHistorial = require('../model/cita_historial.model');
 
-  // 1) Crear cita
-  const cita = await citasDao.createCita({
-    clinic_id,
-    paciente_id,
-    doctor_id,
-    fecha,
-    hora,
-    detalles
-  });
+const PacientesDAO = require('../persistence/pacientes.persistence');
+const UsuariosDAO = require('../persistence/usuarios.persistence');
 
-  // 2) Agregar tratamientos y calcular total
-  let total = 0;
+const AuditoriaBusiness = require('./auditoria.business');
 
-  for (const t of tratamientos) {
-    await citaTratamientosDao.addTratamientoToCita({
-      cita_id: cita.id,
-      tratamiento_id: t.tratamiento_id,
-      precio_aplicado: t.precio_aplicado
+class CitasBusiness {
+
+  /**
+   * Crear cita
+   */
+  static async crear({ data, user }) {
+    const citasDAO = new CitasDAO(user.clinic_id);
+    const pacientesDAO = new PacientesDAO(user.clinic_id);
+    const usuariosDAO = new UsuariosDAO(user.clinic_id);
+    const citaTratamientosDAO = new CitaTratamientosDAO();
+
+    // 1️⃣ Validar paciente
+    const paciente = await pacientesDAO.getById(data.paciente_id);
+    if (!paciente) {
+      throw new Error('Paciente no válido');
+    }
+
+    // 2️⃣ Validar doctor
+    const doctor = await usuariosDAO.getById(data.doctor_id);
+    if (!doctor) {
+      throw new Error('Doctor no válido');
+    }
+
+    // 3️⃣ Crear cita
+    const cita = new Cita({
+      paciente_id: data.paciente_id,
+      doctor_id: data.doctor_id,
+      fecha: data.fecha,
+      hora: data.hora,
+      estado: 'pendiente',
+      detalles: data.detalles
     });
 
-    total += Number(t.precio_aplicado);
+    const citaCreada = await citasDAO.insert(cita);
+
+    // 4️⃣ Asociar tratamientos (si existen)
+    if (Array.isArray(data.tratamientos)) {
+      for (const t of data.tratamientos) {
+        const ct = new CitaTratamiento({
+          cita_id: citaCreada.id,
+          tratamiento_id: t.tratamiento_id,
+          precio_aplicado: t.precio_aplicado
+        });
+
+        await citaTratamientosDAO.insert(ct);
+      }
+    }
+
+    // 5️⃣ Auditoría
+    await AuditoriaBusiness.registrar({
+      user,
+      accion: 'CREATE',
+      tabla: 'citas',
+      registro_id: citaCreada.id,
+      descripcion: 'Creación de cita'
+    });
+
+    return citaCreada;
   }
 
-  // 3) Crear pago pendiente
-  const pago = await pagosDao.createPago({
-    clinic_id,
-    paciente_id,
-    cita_id: cita.id,
-    monto: total
-  });
+  /**
+   * Reprogramar cita (fecha / hora)
+   */
+  static async reprogramar({ citaId, nuevaFecha, nuevaHora, motivo, user }) {
+    const citasDAO = new CitasDAO(user.clinic_id);
+    const historialDAO = new CitaHistorialDAO();
 
-  // 4) Auditoría
-  await auditoriaDao.registrarAuditoria({
-    clinic_id,
-    usuario_id,
-    accion: 'CREATE',
-    tabla: 'citas',
-    registro_id: cita.id,
-    descripcion: `Cita creada con ${tratamientos.length} tratamientos`
-  });
+    const cita = await citasDAO.getById(citaId);
+    if (!cita) {
+      throw new Error('Cita no encontrada');
+    }
 
-  return { cita, pago };
-}
+    // 1️⃣ Guardar historial
+    const historial = new CitaHistorial({
+      cita_id: cita.id,
+      fecha_anterior: cita.fecha,
+      hora_anterior: cita.hora,
+      fecha_nueva: nuevaFecha,
+      hora_nueva: nuevaHora,
+      usuario_id: user.id,
+      motivo
+    });
 
-/**
- * Reprogramar cita
- */
-async function reprogramarCita({
-  cita_id,
-  nueva_fecha,
-  nueva_hora,
-  usuario_id,
-  motivo
-}) {
-  const cita = await citasDao.findById(cita_id);
-  if (!cita) throw new Error('La cita no existe');
-  if (cita.estado === 'cancelada') {
-    throw new Error('No se puede reprogramar una cita cancelada');
-  }
+    await historialDAO.insert(historial);
 
-  await citaHistorialDao.registrarCambioCita({
-    cita_id,
-    fecha_anterior: cita.fecha,
-    hora_anterior: cita.hora,
-    fecha_nueva: nueva_fecha,
-    hora_nueva: nueva_hora,
-    usuario_id,
-    motivo
-  });
-
-  const citaActualizada = await citasDao.updateCita({
-    id: cita_id,
-    fecha: nueva_fecha,
-    hora: nueva_hora
-  });
-
-  await auditoriaDao.registrarAuditoria({
-    clinic_id: cita.clinic_id,
-    usuario_id,
-    accion: 'UPDATE',
-    tabla: 'citas',
-    registro_id: cita.id,
-    descripcion: 'Reprogramación de cita'
-  });
-
-  return citaActualizada;
-}
-
-/**
- * Pagar cita
- */
-async function pagarCita({
-  pago_id,
-  metodo,
-  usuario_id
-}) {
-  const pago = await pagosDao.findById(pago_id);
-  if (!pago) throw new Error('El pago no existe');
-  if (pago.estado !== 'pendiente') {
-    throw new Error('El pago no está pendiente');
-  }
-
-  const pagoPagado = await pagosDao.marcarPagoComoPagado(
-    pago.clinic_id,
-    pago.id,
-    metodo
-  );
-
-  await auditoriaDao.registrarAuditoria({
-    clinic_id: pago.clinic_id,
-    usuario_id,
-    accion: 'UPDATE',
-    tabla: 'pagos',
-    registro_id: pago.id,
-    descripcion: `Pago realizado con método ${metodo}`
-  });
-
-  return pagoPagado;
-}
-
-/**
- * Cancelar cita
- */
-async function cancelarCita({
-  cita_id,
-  usuario_id,
-  motivo
-}) {
-  const cita = await citasDao.findById(cita_id);
-  if (!cita) throw new Error('La cita no existe');
-  if (cita.estado === 'cancelada') {
-    throw new Error('La cita ya está cancelada');
-  }
-
-  await citasDao.cancelCita(cita_id);
-
-  const pagos = await pagosDao.searchPagos({
-    clinic_id: cita.clinic_id,
-    cita_id
-  });
-
-  if (pagos.length && pagos[0].estado === 'pendiente') {
-    await pagosDao.cancelPago(
-      cita.clinic_id,
-      pagos[0].id
+    // 2️⃣ Reprogramar
+    const actualizada = await citasDAO.reprogramar(
+      cita.id,
+      nuevaFecha,
+      nuevaHora
     );
+
+    // 3️⃣ Auditoría
+    await AuditoriaBusiness.registrar({
+      user,
+      accion: 'RESCHEDULE',
+      tabla: 'citas',
+      registro_id: cita.id,
+      descripcion: 'Reprogramación de cita'
+    });
+
+    return actualizada;
   }
 
-  await auditoriaDao.registrarAuditoria({
-    clinic_id: cita.clinic_id,
-    usuario_id,
-    accion: 'CANCEL',
-    tabla: 'citas',
-    registro_id: cita.id,
-    descripcion: motivo || 'Cancelación de cita'
-  });
+  /**
+   * Cambiar estado de la cita
+   */
+  static async cambiarEstado({ citaId, estado, user }) {
+    const citasDAO = new CitasDAO(user.clinic_id);
 
-  return true;
+    const cita = await citasDAO.getById(citaId);
+    if (!cita) {
+      throw new Error('Cita no encontrada');
+    }
+
+    cita.estado = estado;
+    const actualizada = await citasDAO.update(cita);
+
+    await AuditoriaBusiness.registrar({
+      user,
+      accion: 'UPDATE',
+      tabla: 'citas',
+      registro_id: citaId,
+      descripcion: `Cambio de estado a ${estado}`
+    });
+
+    return actualizada;
+  }
+
+  /**
+   * Obtener cita por ID
+   */
+  static async getById({ citaId, user }) {
+    const citasDAO = new CitasDAO(user.clinic_id);
+    return citasDAO.getById(citaId);
+  }
+
+  /**
+   * Listar / buscar citas
+   */
+  static async listar({ filter = {}, user }) {
+    const citasDAO = new CitasDAO(user.clinic_id);
+    return citasDAO.findByFilter(filter);
+  }
 }
 
-module.exports = {
-  createCitaCompleta,
-  reprogramarCita,
-  pagarCita,
-  cancelarCita
-};
+module.exports = CitasBusiness;

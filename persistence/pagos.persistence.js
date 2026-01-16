@@ -1,220 +1,173 @@
-const pool = require('../dbmanager/postgres');
+const db = require('../dbmanager/postgres');
+const Pago = require('../model/pagos.model');
 
-/**
- * Crear pago
- */
-async function createPago({
-  clinic_id,
-  paciente_id,
-  cita_id,
-  monto,
-  metodo,
-  estado = 'pendiente', client = pool
-}) {
-  const query = `
-    INSERT INTO pagos (
-      clinic_id, paciente_id, cita_id, monto, metodo, estado
-    )
-    VALUES ($1,$2,$3,$4,$5,$6)
-    RETURNING *;
-  `;
+class PagosDAO {
 
-  const { rows } = await pool.query(query, [
-    clinic_id,
-    paciente_id,
-    cita_id,
-    monto,
-    metodo,
-    estado
-  ]);
-
-  return rows[0];
-}
-/**
- * Obtener pago por ID (por clínica)
- */
-async function findById(clinic_id, pago_id) {
-  const query = `
-    SELECT
-      pg.*,
-      p.nombres,
-      p.apellido_paterno,
-      p.apellido_materno
-    FROM pagos pg
-    JOIN pacientes pa ON pa.id = pg.paciente_id
-    JOIN personas p ON p.id = pa.persona_id
-    WHERE pg.id = $1
-      AND pg.clinic_id = $2;
-  `;
-
-  const { rows } = await pool.query(query, [pago_id, clinic_id]);
-  return rows[0] || null;
-}
-/**
- * Listar pagos por clínica
- */
-async function findAllByClinic(clinic_id) {
-  const query = `
-    SELECT
-      pg.id,
-      pg.monto,
-      pg.metodo,
-      pg.estado,
-      pg.fecha,
-      p.nombres,
-      p.apellido_paterno,
-      p.apellido_materno
-    FROM pagos pg
-    JOIN pacientes pa ON pa.id = pg.paciente_id
-    JOIN personas p ON p.id = pa.persona_id
-    WHERE pg.clinic_id = $1
-    ORDER BY pg.fecha DESC;
-  `;
-
-  const { rows } = await pool.query(query, [clinic_id]);
-  return rows;
-}
-/**
- * Búsqueda avanzada de pagos
- * - texto (paciente)
- * - rango de fechas
- * - estado
- */
-async function searchPagos(
-  clinic_id,
-  {
-    texto,
-    fecha_desde,
-    fecha_hasta,
-    estado
-  }
-) {
-  const conditions = [`pg.clinic_id = $1`];
-  const values = [clinic_id];
-  let idx = 2;
-
-  if (fecha_desde && fecha_hasta) {
-    conditions.push(`pg.fecha BETWEEN $${idx} AND $${idx + 1}`);
-    values.push(fecha_desde, fecha_hasta);
-    idx += 2;
+  constructor(clinicId) {
+    if (!clinicId) {
+      throw new Error('clinic_id es obligatorio para PagosDAO');
+    }
+    this.clinicId = clinicId;
   }
 
-  if (estado) {
-    conditions.push(`pg.estado = $${idx}`);
-    values.push(estado);
-    idx++;
+  // 1️⃣ Instanciar (uso interno)
+  instantiate(row) {
+    if (!row) return null;
+
+    return new Pago({
+      id: row.id ?? null,
+      clinic_id: row.clinic_id ?? null,
+      paciente_id: row.paciente_id ?? null,
+      cita_id: row.cita_id ?? null,
+      monto: row.monto ?? null,
+      metodo: row.metodo ?? null,
+      estado: row.estado ?? 'pendiente',
+      fecha: row.fecha ?? null
+    });
   }
 
-  if (texto) {
-    conditions.push(`
-      (
-        p.nombres ILIKE $${idx}
-        OR p.apellido_paterno ILIKE $${idx}
-        OR p.apellido_materno ILIKE $${idx}
-      )
-    `);
-    values.push(`%${texto}%`);
-    idx++;
+  // 2️⃣ Registrar pago (o intento)
+  async insert(model) {
+    const query = `
+      INSERT INTO pagos (
+        clinic_id,
+        paciente_id,
+        cita_id,
+        monto,
+        metodo,
+        estado,
+        fecha
+      ) VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, now()))
+      RETURNING *
+    `;
+
+    const values = [
+      this.clinicId,
+      model.paciente_id,
+      model.cita_id,
+      model.monto,
+      model.metodo,
+      model.estado ?? 'pendiente',
+      model.fecha ?? null
+    ];
+
+    const { rows } = await db.query(query, values);
+    return this.instantiate(rows[0]);
   }
 
-  const query = `
-    SELECT
-      pg.id,
-      pg.monto,
-      pg.metodo,
-      pg.estado,
-      pg.fecha,
-      p.nombres,
-      p.apellido_paterno,
-      p.apellido_materno
-    FROM pagos pg
-    JOIN pacientes pa ON pa.id = pg.paciente_id
-    JOIN personas p ON p.id = pa.persona_id
-    WHERE ${conditions.join(' AND ')}
-    ORDER BY pg.fecha DESC;
-  `;
+  // 3️⃣ Update controlado (NO cambia monto)
+  async update(model) {
+    if (!model.id) {
+      throw new Error('id es obligatorio para actualizar pago');
+    }
 
-  const { rows } = await pool.query(query, values);
-  return rows;
+    const query = `
+      UPDATE pagos
+      SET
+        metodo = $1,
+        estado = $2,
+        fecha = $3
+      WHERE id = $4
+        AND clinic_id = $5
+      RETURNING *
+    `;
+
+    const values = [
+      model.metodo,
+      model.estado,
+      model.fecha,
+      model.id,
+      this.clinicId
+    ];
+
+    const { rows } = await db.query(query, values);
+    if (rows.length === 0) return null;
+
+    return this.instantiate(rows[0]);
+  }
+
+  // 4️⃣ Obtener pago por ID
+  async getById(id) {
+    const query = `
+      SELECT *
+      FROM pagos
+      WHERE id = $1
+        AND clinic_id = $2
+    `;
+
+    const { rows } = await db.query(query, [id, this.clinicId]);
+    if (rows.length === 0) return null;
+
+    return this.instantiate(rows[0]);
+  }
+
+  // 5️⃣ Listar todos los pagos (solo admin)
+  async listAll() {
+    const query = `
+      SELECT *
+      FROM pagos
+      WHERE clinic_id = $1
+      ORDER BY fecha DESC
+    `;
+
+    const { rows } = await db.query(query, [this.clinicId]);
+    return rows.map(row => this.instantiate(row));
+  }
+
+  // 6️⃣ Buscar pagos por filtros
+  async findByFilter(filter = {}) {
+    const conditions = ['clinic_id = $1'];
+    const values = [this.clinicId];
+    let idx = 2;
+
+    if (filter.paciente_id) {
+      conditions.push(`paciente_id = $${idx++}`);
+      values.push(filter.paciente_id);
+    }
+
+    if (filter.cita_id) {
+      conditions.push(`cita_id = $${idx++}`);
+      values.push(filter.cita_id);
+    }
+
+    if (filter.estado) {
+      conditions.push(`estado = $${idx++}`);
+      values.push(filter.estado);
+    }
+
+    if (filter.metodo) {
+      conditions.push(`metodo = $${idx++}`);
+      values.push(filter.metodo);
+    }
+
+    if (filter.monto) {
+      conditions.push(`monto = $${idx++}`);
+      values.push(filter.monto);
+    }
+
+    // Fecha exacta
+    if (filter.fecha) {
+      conditions.push(`DATE(fecha) = $${idx++}`);
+      values.push(filter.fecha);
+    }
+
+    // Intervalo de fechas
+    if (filter.fecha_desde && filter.fecha_hasta) {
+      conditions.push(`fecha BETWEEN $${idx} AND $${idx + 1}`);
+      values.push(filter.fecha_desde, filter.fecha_hasta);
+      idx += 2;
+    }
+
+    const query = `
+      SELECT *
+      FROM pagos
+      WHERE ${conditions.join(' AND ')}
+      ORDER BY fecha DESC
+    `;
+
+    const { rows } = await db.query(query, values);
+    return rows.map(row => this.instantiate(row));
+  }
 }
-/**
- * Marcar pago como pagado
- * - estado → pagado
- * - metodo → método seleccionado
- * - fecha → NOW()
- * - monto NO se toca
- */
-async function marcarPagoComoPagado(clinic_id, pago_id, metodo) {
-  const query = `
-    UPDATE pagos
-    SET
-      estado = 'pagado',
-      metodo = $1,
-      fecha = NOW()
-    WHERE id = $2
-      AND clinic_id = $3
-    RETURNING *;
-  `;
 
-  const { rows } = await pool.query(query, [
-    metodo,
-    pago_id,
-    clinic_id
-  ]);
-
-  return rows[0];
-}
-
-/**
- * Cancelar pago
- * - estado → cancelado
- * - metodo → no_hubo
- * - fecha → NOW()
- */
-async function cancelPago(clinic_id, pago_id, client = pool) {
-  const query = `
-    UPDATE pagos
-    SET
-      estado = 'cancelado',
-      metodo = 'no_hubo',
-      fecha = NOW()
-    WHERE id = $1
-      AND clinic_id = $2
-    RETURNING *;
-  `;
-
-  const { rows } = await pool.query(query, [pago_id, clinic_id]);
-  return rows[0];
-}
-/**
- * Actualizar SOLO el método de pago
- * (ej: se equivocaron en efectivo / tarjeta)
- */
-async function updateMetodoPago({ clinic_id, pago_id, metodo }) {
-  const query = `
-    UPDATE pagos
-    SET
-      metodo = $1,
-      fecha = NOW()
-    WHERE id = $2
-      AND clinic_id = $3
-    RETURNING *;
-  `;
-
-  const { rows } = await pool.query(query, [
-    metodo,
-    pago_id,
-    clinic_id
-  ]);
-
-  return rows[0];
-}
-module.exports = {
-  updateMetodoPago,
-  marcarPagoComoPagado,
-  createPago,
-  findById,
-  findAllByClinic,
-  searchPagos,
-  cancelPago
-};
+module.exports = PagosDAO;

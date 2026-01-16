@@ -1,135 +1,156 @@
-const pool = require('../dbmanager/postgres');
+const db = require('../dbmanager/postgres');
+const Persona = require('../model/personas.model');
 
-/**
- * Crear persona
- */
-async function createPersona({
-  dni,
-  nombres,
-  apellido_paterno,
-  apellido_materno,
-  telefono,
-  fecha_nacimiento,
-  sexo,
-  origen_datos = 'manual'
-}) {
-  const query = `
-    INSERT INTO personas (
-      dni,
-      nombres,
-      apellido_paterno,
-      apellido_materno,
-      telefono,
-      fecha_nacimiento,
-      sexo,
-      origen_datos
-    )
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-    RETURNING *;
-  `;
+class PersonasDAO {
 
-  const { rows } = await pool.query(query, [
-    dni,
-    nombres,
-    apellido_paterno,
-    apellido_materno,
-    telefono,
-    fecha_nacimiento,
-    sexo,
-    origen_datos
-  ]);
+  constructor() {}
 
-  return rows[0];
-}
-/**
- * Obtener persona por ID
- */
-async function findById(persona_id) {
-  const query = `
-    SELECT *
-    FROM personas
-    WHERE id = $1;
-  `;
+  // 1️⃣ Instanciar (uso interno)
+  instantiate(row) {
+    if (!row) return null;
 
-  const { rows } = await pool.query(query, [persona_id]);
-  return rows[0] || null;
-}
-/**
- * Buscar persona por DNI
- */
-async function findByDni(dni) {
-  const query = `
-    SELECT *
-    FROM personas
-    WHERE dni = $1;
-  `;
-
-  const { rows } = await pool.query(query, [dni]);
-  return rows[0] || null;
-}
-/**
- * Búsqueda flexible de personas
- * (DNI, nombres, apellidos)
- */
-async function searchPersonas(texto) {
-  const query = `
-    SELECT *
-    FROM personas
-    WHERE
-      dni ILIKE $1
-      OR nombres ILIKE $1
-      OR apellido_paterno ILIKE $1
-      OR apellido_materno ILIKE $1
-    ORDER BY nombres ASC;
-  `;
-
-  const { rows } = await pool.query(query, [`%${texto}%`]);
-  return rows;
-}
-/**
- * Actualizar persona
- * (business decide qué campos se pueden modificar)
- */
-async function updatePersona(persona_id, data) {
-  const fields = [];
-  const values = [];
-  let idx = 1;
-
-  for (const key in data) {
-    fields.push(`${key} = $${idx}`);
-    values.push(data[key]);
-    idx++;
+    return new Persona({
+      id: row.id ?? null,
+      dni: row.dni ?? null,
+      nombres: row.nombres ?? null,
+      apellido_paterno: row.apellido_paterno ?? null,
+      apellido_materno: row.apellido_materno ?? null,
+      telefono: row.telefono ?? null,
+      fecha_nacimiento: row.fecha_nacimiento ?? null,
+      sexo: row.sexo ?? null,
+      origen_datos: row.origen_datos ?? 'api',
+      created_at: row.created_at ?? null,
+      ultima_actualizacion: row.ultima_actualizacion ?? null
+    });
   }
 
-  values.push(persona_id);
+  // 2️⃣ Insertar persona (API o manual)
+  async insert(model) {
+    const query = `
+      INSERT INTO personas (
+        dni,
+        nombres,
+        apellido_paterno,
+        apellido_materno,
+        telefono,
+        fecha_nacimiento,
+        sexo,
+        origen_datos
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      RETURNING *
+    `;
 
-  const query = `
-    UPDATE personas
-    SET ${fields.join(', ')}
-    WHERE id = $${idx}
-    RETURNING *;
-  `;
+    const values = [
+      model.dni,
+      model.nombres,
+      model.apellido_paterno,
+      model.apellido_materno,
+      model.telefono,
+      model.fecha_nacimiento,
+      model.sexo,
+      model.origen_datos ?? 'api'
+    ];
 
-  const { rows } = await pool.query(query, values);
-  return rows[0];
+    const { rows } = await db.query(query, values);
+    return this.instantiate(rows[0]);
+  }
+
+  // 3️⃣ Update (correcciones)
+  async update(model) {
+    if (!model.id) {
+      throw new Error('id es obligatorio para actualizar persona');
+    }
+
+    const query = `
+      UPDATE personas
+      SET
+        nombres = $1,
+        apellido_paterno = $2,
+        apellido_materno = $3,
+        telefono = $4,
+        ultima_actualizacion = now()
+      WHERE id = $5
+      RETURNING *
+    `;
+
+    const values = [
+      model.nombres,
+      model.apellido_paterno,
+      model.apellido_materno,
+      model.telefono,
+      model.id
+    ];
+
+    const { rows } = await db.query(query, values);
+    if (rows.length === 0) return null;
+
+    return this.instantiate(rows[0]);
+  }
+
+  // 4️⃣ Obtener persona por ID
+  async getById(id) {
+    const query = `
+      SELECT *
+      FROM personas
+      WHERE id = $1
+    `;
+
+    const { rows } = await db.query(query, [id]);
+    if (rows.length === 0) return null;
+
+    return this.instantiate(rows[0]);
+  }
+
+  // 5️⃣ Obtener persona por DNI (CLAVE)
+  async getByDni(dni) {
+    const query = `
+      SELECT *
+      FROM personas
+      WHERE dni = $1
+    `;
+
+    const { rows } = await db.query(query, [dni]);
+    if (rows.length === 0) return null;
+
+    return this.instantiate(rows[0]);
+  }
+
+  // 6️⃣ Buscar personas (buscador)
+  async findByFilter(filter = {}) {
+    const conditions = [];
+    const values = [];
+    let idx = 1;
+
+    if (filter.texto && filter.texto.trim() !== '') {
+      const text = `%${filter.texto.trim()}%`;
+
+      conditions.push(`
+        (
+          dni ILIKE $${idx}
+          OR nombres ILIKE $${idx}
+          OR apellido_paterno ILIKE $${idx}
+          OR apellido_materno ILIKE $${idx}
+        )
+      `);
+
+      values.push(text);
+      idx++;
+    }
+
+    if (conditions.length === 0) {
+      throw new Error('Debe enviar texto para buscar personas');
+    }
+
+    const query = `
+      SELECT *
+      FROM personas
+      WHERE ${conditions.join(' AND ')}
+      ORDER BY created_at DESC
+    `;
+
+    const { rows } = await db.query(query, values);
+    return rows.map(row => this.instantiate(row));
+  }
 }
-/**
- * Eliminar persona (delete físico)
- * Business valida que sea origen manual
- */
-async function deletePersona(persona_id) {
-  const query = `
-    DELETE FROM personas
-    WHERE id = $1;
-  `;
 
-  await pool.query(query, [persona_id]);
-}
-module.exports = {
-  createPersona,
-  findById,
-  findByDni,
-  searchPersonas,
-  updatePersona,
-  deletePersona
-};
+module.exports = PersonasDAO;

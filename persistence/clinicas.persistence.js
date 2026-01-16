@@ -1,153 +1,166 @@
-const pool = require('../dbmanager/postgres');
+const db = require('../dbmanager/postgres');
+const Clinica = require('../model/clinicas.model');
 
-/**
- * Crear clínica
- */
-async function createClinica({
-  nombre,
-  ruc,
-  direccion,
-  telefono,
-  plan = 'free'
-}) {
-  const query = `
-    INSERT INTO clinicas (
-      nombre, ruc, direccion, telefono, plan, activa
-    )
-    VALUES ($1,$2,$3,$4,$5,true)
-    RETURNING *;
-  `;
+class ClinicasDAO {
 
-  const { rows } = await pool.query(query, [
-    nombre,
-    ruc,
-    direccion,
-    telefono,
-    plan
-  ]);
+  constructor() {}
 
-  return rows[0];
-}
-/**
- * Obtener clínica por ID
- */
-async function findById(clinic_id) {
-  const query = `
-    SELECT *
-    FROM clinicas
-    WHERE id = $1;
-  `;
+  // 1️⃣ Instanciar (uso interno)
+  instantiate(row) {
+    if (!row) return null;
 
-  const { rows } = await pool.query(query, [clinic_id]);
-  return rows[0] || null;
-}
-/**
- * Listar todas las clínicas
- */
-async function findAll() {
-  const query = `
-    SELECT *
-    FROM clinicas
-    ORDER BY created_at DESC;
-  `;
-
-  const { rows } = await pool.query(query);
-  return rows;
-}
-/**
- * Búsqueda avanzada de clínicas
- */
-async function searchClinicas({
-  texto,
-  plan,
-  activa
-}) {
-  const conditions = [];
-  const values = [];
-  let idx = 1;
-
-  if (texto) {
-    conditions.push(`
-      (
-        nombre ILIKE $${idx}
-        OR ruc ILIKE $${idx}
-        OR direccion ILIKE $${idx}
-        OR telefono ILIKE $${idx}
-      )
-    `);
-    values.push(`%${texto}%`);
-    idx++;
+    return new Clinica({
+      id: row.id ?? null,
+      nombre: row.nombre ?? null,
+      ruc: row.ruc ?? null,
+      direccion: row.direccion ?? null,
+      telefono: row.telefono ?? null,
+      plan: row.plan ?? 'free',
+      activa: row.activa ?? true,
+      created_at: row.created_at ?? null
+    });
   }
 
-  if (plan) {
-    conditions.push(`plan = $${idx}`);
-    values.push(plan);
-    idx++;
+  // 2️⃣ Crear clínica (onboarding)
+  async insert(model) {
+    const query = `
+      INSERT INTO clinicas (
+        nombre,
+        ruc,
+        direccion,
+        telefono,
+        plan,
+        activa
+      ) VALUES ($1, $2, $3, $4, $5, $6)
+      RETURNING *
+    `;
+
+    const values = [
+      model.nombre,
+      model.ruc,
+      model.direccion,
+      model.telefono,
+      model.plan ?? 'free',
+      model.activa ?? true
+    ];
+
+    const { rows } = await db.query(query, values);
+    return this.instantiate(rows[0]);
   }
 
-  if (activa !== undefined) {
-    conditions.push(`activa = $${idx}`);
-    values.push(activa);
-    idx++;
+  // 3️⃣ Update administrativo
+  async update(model) {
+    if (!model.id) {
+      throw new Error('id es obligatorio para actualizar clínica');
+    }
+
+    const query = `
+      UPDATE clinicas
+      SET
+        nombre = $1,
+        ruc = $2,
+        direccion = $3,
+        telefono = $4,
+        plan = $5
+      WHERE id = $6
+      RETURNING *
+    `;
+
+    const values = [
+      model.nombre,
+      model.ruc,
+      model.direccion,
+      model.telefono,
+      model.plan,
+      model.id
+    ];
+
+    const { rows } = await db.query(query, values);
+    if (rows.length === 0) return null;
+
+    return this.instantiate(rows[0]);
   }
 
-  const whereClause = conditions.length
-    ? `WHERE ${conditions.join(' AND ')}`
-    : '';
+  // 4️⃣ Activar / desactivar clínica (soft delete)
+  async setActiva(id, activa) {
+    const query = `
+      UPDATE clinicas
+      SET activa = $1
+      WHERE id = $2
+      RETURNING *
+    `;
 
-  const query = `
-    SELECT *
-    FROM clinicas
-    ${whereClause}
-    ORDER BY created_at DESC;
-  `;
+    const { rows } = await db.query(query, [activa, id]);
+    if (rows.length === 0) return null;
 
-  const { rows } = await pool.query(query, values);
-  return rows;
-}
-/**
- * Actualizar datos de clínica
- */
-async function updateClinica(clinic_id, data) {
-  const fields = [];
-  const values = [];
-  let idx = 1;
-
-  for (const key in data) {
-    fields.push(`${key} = $${idx}`);
-    values.push(data[key]);
-    idx++;
+    return this.instantiate(rows[0]);
   }
 
-  values.push(clinic_id);
+  // 5️⃣ Obtener clínica por ID
+  async getById(id) {
+    const query = `
+      SELECT *
+      FROM clinicas
+      WHERE id = $1
+    `;
 
-  const query = `
-    UPDATE clinicas
-    SET ${fields.join(', ')}
-    WHERE id = $${idx}
-    RETURNING *;
-  `;
+    const { rows } = await db.query(query, [id]);
+    if (rows.length === 0) return null;
 
-  const { rows } = await pool.query(query, values);
-  return rows[0];
+    return this.instantiate(rows[0]);
+  }
+
+  // 6️⃣ Listar todas las clínicas (super admin)
+  async listAll() {
+    const query = `
+      SELECT *
+      FROM clinicas
+      ORDER BY created_at DESC
+    `;
+
+    const { rows } = await db.query(query);
+    return rows.map(row => this.instantiate(row));
+  }
+
+  // 7️⃣ Buscar clínicas (búsqueda administrativa simple)
+  async findByFilter(filter = {}) {
+    const conditions = [];
+    const values = [];
+    let idx = 1;
+
+    if (filter.nombre) {
+      conditions.push(`nombre ILIKE $${idx++}`);
+      values.push(`%${filter.nombre}%`);
+    }
+
+    if (filter.ruc) {
+      conditions.push(`ruc = $${idx++}`);
+      values.push(filter.ruc);
+    }
+
+    if (filter.plan) {
+      conditions.push(`plan = $${idx++}`);
+      values.push(filter.plan);
+    }
+
+    if (typeof filter.activa === 'boolean') {
+      conditions.push(`activa = $${idx++}`);
+      values.push(filter.activa);
+    }
+
+    const whereClause =
+      conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    const query = `
+      SELECT *
+      FROM clinicas
+      ${whereClause}
+      ORDER BY created_at DESC
+    `;
+
+    const { rows } = await db.query(query, values);
+    return rows.map(row => this.instantiate(row));
+  }
 }
-/**
- * Activar / desactivar clínica
- */
-async function setClinicaActiva(clinic_id, activa) {
-  const query = `
-    UPDATE clinicas
-    SET activa = $1
-    WHERE id = $2;
-  `;
 
-  await pool.query(query, [activa, clinic_id]);
-}
-module.exports = {
-  createClinica,
-  findById,
-  findAll,
-  searchClinicas,
-  updateClinica,
-  setClinicaActiva
-};
+module.exports = ClinicasDAO;

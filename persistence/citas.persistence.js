@@ -1,198 +1,228 @@
-const pool = require('../dbmanager/postgres');
+const db = require('../dbmanager/postgres');
+const Cita = require('../model/citas.model');
 
-/**
- * Crear cita
- */
-async function createCita({
-  clinic_id,
-  paciente_id,
-  doctor_id,
-  fecha,
-  hora,
-  estado = 'pendiente',
-  detalles,
-  client = pool
-}) {
-  const query = `
-    INSERT INTO citas (
-      clinic_id, paciente_id, doctor_id, fecha, hora, estado, detalles
-    )
-    VALUES ($1,$2,$3,$4,$5,$6,$7)
-    RETURNING *;
-  `;
+class CitasDAO {
 
-  const { rows } = await pool.query(query, [
-    clinic_id,
-    paciente_id,
-    doctor_id,
-    fecha,
-    hora,
-    estado,
-    detalles
-  ]);
-
-  return rows[0];
-}
-/**
- * Obtener cita por ID (por clínica)
- */
-async function findById(clinic_id, cita_id) {
-  const query = `
-    SELECT
-      c.*,
-      p.nombres AS paciente_nombres,
-      p.apellido_paterno AS paciente_apellido_paterno,
-      p.apellido_materno AS paciente_apellido_materno,
-      d.email AS doctor_email
-    FROM citas c
-    JOIN pacientes pa ON pa.id = c.paciente_id
-    JOIN personas p ON p.id = pa.persona_id
-    JOIN usuarios d ON d.id = c.doctor_id
-    WHERE c.id = $1
-      AND c.clinic_id = $2;
-  `;
-
-  const { rows } = await pool.query(query, [cita_id, clinic_id]);
-  return rows[0] || null;
-}
-/**
- * Listar citas por clínica
- */
-async function findAllByClinic(clinic_id) {
-  const query = `
-    SELECT
-      c.*,
-      p.nombres AS paciente_nombres,
-      p.apellido_paterno AS paciente_apellido_paterno,
-      p.apellido_materno AS paciente_apellido_materno
-    FROM citas c
-    JOIN pacientes pa ON pa.id = c.paciente_id
-    JOIN personas p ON p.id = pa.persona_id
-    WHERE c.clinic_id = $1
-    ORDER BY c.fecha DESC, c.hora DESC;
-  `;
-
-  const { rows } = await pool.query(query, [clinic_id]);
-  return rows;
-}
-/**
- * Búsqueda avanzada de citas
- * Soporta:
- * - texto (nombre, apellido, dni)
- * - rango de fechas
- * - doctor
- * - estado
- */
-async function searchCitas(
-  clinic_id,
-  {
-    texto,
-    fecha_desde,
-    fecha_hasta,
-    doctor_id,
-    estado
-  }
-) {
-  const conditions = [`c.clinic_id = $1`];
-  const values = [clinic_id];
-  let idx = 2;
-
-  if (fecha_desde && fecha_hasta) {
-    conditions.push(`c.fecha BETWEEN $${idx} AND $${idx + 1}`);
-    values.push(fecha_desde, fecha_hasta);
-    idx += 2;
+  constructor(clinicId) {
+    if (!clinicId) {
+      throw new Error('clinic_id es obligatorio para CitasDAO');
+    }
+    this.clinicId = clinicId;
   }
 
-  if (doctor_id) {
-    conditions.push(`c.doctor_id = $${idx}`);
-    values.push(doctor_id);
-    idx++;
+  // 1️⃣ Instanciar (uso interno)
+  instantiate(row) {
+    if (!row) return null;
+
+    return new Cita({
+      id: row.id ?? null,
+      clinic_id: row.clinic_id ?? null,
+      paciente_id: row.paciente_id ?? null,
+      doctor_id: row.doctor_id ?? null,
+      fecha: row.fecha ?? null,
+      hora: row.hora ?? null,
+      estado: row.estado ?? 'pendiente',
+      detalles: row.detalles ?? null,
+      created_at: row.created_at ?? null
+    });
   }
 
-  if (estado) {
-    conditions.push(`c.estado = $${idx}`);
-    values.push(estado);
-    idx++;
+  // 2️⃣ Crear cita
+  async insert(model) {
+    const query = `
+      INSERT INTO citas (
+        clinic_id,
+        paciente_id,
+        doctor_id,
+        fecha,
+        hora,
+        estado,
+        detalles
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+      RETURNING *
+    `;
+
+    const values = [
+      this.clinicId,
+      model.paciente_id,
+      model.doctor_id,
+      model.fecha,
+      model.hora,
+      model.estado ?? 'pendiente',
+      model.detalles
+    ];
+
+    const { rows } = await db.query(query, values);
+    return this.instantiate(rows[0]);
   }
 
-  if (texto) {
-    conditions.push(`
-      (
-        p.nombres ILIKE $${idx}
-        OR p.apellido_paterno ILIKE $${idx}
-        OR p.apellido_materno ILIKE $${idx}
-        OR p.dni ILIKE $${idx}
-      )
-    `);
-    values.push(`%${texto}%`);
-    idx++;
+  // 3️⃣ Update general (NO reprograma)
+  async update(model) {
+    if (!model.id) {
+      throw new Error('id es obligatorio para actualizar una cita');
+    }
+
+    const query = `
+      UPDATE citas
+      SET
+        paciente_id = $1,
+        doctor_id = $2,
+        estado = $3,
+        detalles = $4
+      WHERE id = $5
+        AND clinic_id = $6
+      RETURNING *
+    `;
+
+    const values = [
+      model.paciente_id,
+      model.doctor_id,
+      model.estado,
+      model.detalles,
+      model.id,
+      this.clinicId
+    ];
+
+    const { rows } = await db.query(query, values);
+    if (rows.length === 0) return null;
+
+    return this.instantiate(rows[0]);
   }
 
-  const query = `
-    SELECT
-      c.id,
-      c.fecha,
-      c.hora,
-      c.estado,
-      p.nombres AS paciente_nombres,
-      p.apellido_paterno AS paciente_apellido_paterno,
-      p.apellido_materno AS paciente_apellido_materno
-    FROM citas c
-    JOIN pacientes pa ON pa.id = c.paciente_id
-    JOIN personas p ON p.id = pa.persona_id
-    WHERE ${conditions.join(' AND ')}
-    ORDER BY c.fecha DESC, c.hora DESC;
-  `;
+  // 4️⃣ Reprogramar cita (fecha / hora)
+  async reprogramar(id, nuevaFecha, nuevaHora) {
+    const query = `
+      UPDATE citas
+      SET
+        fecha = $1,
+        hora = $2
+      WHERE id = $3
+        AND clinic_id = $4
+      RETURNING *
+    `;
 
-  const { rows } = await pool.query(query, values);
-  return rows;
+    const values = [
+      nuevaFecha,
+      nuevaHora,
+      id,
+      this.clinicId
+    ];
+
+    const { rows } = await db.query(query, values);
+    if (rows.length === 0) return null;
+
+    return this.instantiate(rows[0]);
+  }
+
+  // 5️⃣ Obtener por ID
+  async getById(id) {
+    const query = `
+      SELECT *
+      FROM citas
+      WHERE id = $1
+        AND clinic_id = $2
+    `;
+
+    const { rows } = await db.query(query, [id, this.clinicId]);
+    if (rows.length === 0) return null;
+
+    return this.instantiate(rows[0]);
+  }
+
+  // 6️⃣ Listar todas (uso admin / staff)
+  async listAll() {
+    const query = `
+      SELECT *
+      FROM citas
+      WHERE clinic_id = $1
+      ORDER BY fecha DESC, hora DESC
+    `;
+
+    const { rows } = await db.query(query, [this.clinicId]);
+    return rows.map(r => this.instantiate(r));
+  }
+
+  // 7️⃣ Buscar por filtros (FUNCIÓN CLAVE)
+  async findByFilter(filter = {}) {
+    const conditions = ['c.clinic_id = $1'];
+    const values = [this.clinicId];
+    let idx = 2;
+
+    // Filtros exactos
+    if (filter.doctor_id) {
+      conditions.push(`c.doctor_id = $${idx++}`);
+      values.push(filter.doctor_id);
+    }
+
+    if (filter.paciente_id) {
+      conditions.push(`c.paciente_id = $${idx++}`);
+      values.push(filter.paciente_id);
+    }
+
+    if (filter.estado) {
+      conditions.push(`c.estado = $${idx++}`);
+      values.push(filter.estado);
+    }
+
+    // Fecha exacta / rango
+    if (filter.fecha) {
+      conditions.push(`c.fecha = $${idx++}`);
+      values.push(filter.fecha);
+    }
+
+    if (filter.fecha_desde && filter.fecha_hasta) {
+      conditions.push(`c.fecha BETWEEN $${idx} AND $${idx + 1}`);
+      values.push(filter.fecha_desde, filter.fecha_hasta);
+      idx += 2;
+    }
+
+    // Hora exacta / rango
+    if (filter.hora) {
+      conditions.push(`c.hora = $${idx++}`);
+      values.push(filter.hora);
+    }
+
+    if (filter.hora_desde && filter.hora_hasta) {
+      conditions.push(`c.hora BETWEEN $${idx} AND $${idx + 1}`);
+      values.push(filter.hora_desde, filter.hora_hasta);
+      idx += 2;
+    }
+
+    // Búsqueda textual por personas (paciente o doctor)
+    if (filter.search_text && filter.search_text.trim() !== '') {
+      const text = `%${filter.search_text.trim()}%`;
+
+      conditions.push(`
+        (
+          pp.dni ILIKE $${idx}
+          OR pp.nombres ILIKE $${idx}
+          OR pp.apellido_paterno ILIKE $${idx}
+          OR pp.apellido_materno ILIKE $${idx}
+          OR dp.dni ILIKE $${idx}
+          OR dp.nombres ILIKE $${idx}
+          OR dp.apellido_paterno ILIKE $${idx}
+          OR dp.apellido_materno ILIKE $${idx}
+        )
+      `);
+
+      values.push(text);
+      idx++;
+    }
+
+    const query = `
+      SELECT c.*
+      FROM citas c
+      INNER JOIN pacientes pa ON pa.id = c.paciente_id
+      INNER JOIN personas pp ON pp.id = pa.persona_id
+      INNER JOIN usuarios du ON du.id = c.doctor_id
+      INNER JOIN personas dp ON dp.id = du.persona_id
+      WHERE ${conditions.join(' AND ')}
+      ORDER BY c.fecha DESC, c.hora DESC
+    `;
+
+    const { rows } = await db.query(query, values);
+    return rows.map(r => this.instantiate(r));
+  }
 }
-/**
- * Actualizar cita
- */
-async function updateCita(clinic_id, cita_id, data, client = pool) {
-  const fields = [];
-  const values = [];
-  let idx = 1;
 
-  for (const key in data) {
-    fields.push(`${key} = $${idx}`);
-    values.push(data[key]);
-    idx++;
-  }
-
-  values.push(cita_id, clinic_id);
-
-  const query = `
-    UPDATE citas
-    SET ${fields.join(', ')}
-    WHERE id = $${idx}
-      AND clinic_id = $${idx + 1}
-    RETURNING *;
-  `;
-
-  const { rows } = await pool.query(query, values);
-  return rows[0];
-}
-/**
- * Cancelar cita (solo cambia estado)
- * El efecto en pagos / auditoría se verá en BUSINESS
- */
-async function cancelCita(clinic_id, cita_id, client = pool) {
-  const query = `
-    UPDATE citas
-    SET estado = 'cancelada'
-    WHERE id = $1
-      AND clinic_id = $2;
-  `;
-
-  await pool.query(query, [cita_id, clinic_id]);
-}
-module.exports = {
-  createCita,
-  findById,
-  findAllByClinic,
-  searchCitas,
-  updateCita,
-  cancelCita
-};
+module.exports = CitasDAO;

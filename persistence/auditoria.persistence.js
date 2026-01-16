@@ -1,168 +1,141 @@
-const pool = require('../db');
+const db = require('../dbmanager/postgres');
+const Auditoria = require('../model/auditoria.model');
 
-/**
- * Registrar acción en auditoría
- */
-async function registrarAuditoria({
-  clinic_id,
-  usuario_id,
-  accion,
-  tabla,
-  registro_id,
-  descripcion, client = pool
-}) {
-  const query = `
-    INSERT INTO auditoria (
-      clinic_id,
-      usuario_id,
-      accion,
-      tabla,
-      registro_id,
-      descripcion
-    )
-    VALUES ($1, $2, $3, $4, $5, $6)
-    RETURNING *;
-  `;
+class AuditoriaDAO {
+  constructor(clinicId) {
+    if (!clinicId) {
+      throw new Error('clinic_id es obligatorio para AuditoriaDAO');
+    }
+    this.clinicId = clinicId;
+  }
 
-  const { rows } = await pool.query(query, [
-    clinic_id,
-    usuario_id,
-    accion,
-    tabla,
-    registro_id,
-    descripcion
-  ]);
+  instantiate(row) {
+    if (!row) return null;
 
-  return rows[0];
-}
+    return new Auditoria({
+      id: row.id ?? null,
+      clinic_id: row.clinic_id ?? null,
+      usuario_id: row.usuario_id ?? null,
+      accion: row.accion ?? null,
+      tabla: row.tabla ?? null,
+      registro_id: row.registro_id ?? null,
+      descripcion: row.descripcion ?? null,
+      fecha: row.fecha ?? null
+    });
+  }
 
-/**
- * Listar auditoría por clínica
- */
-async function listarAuditoriaPorClinica(clinic_id) {
-  const query = `
-    SELECT *
-    FROM auditoria
-    WHERE clinic_id = $1
-    ORDER BY fecha DESC;
-  `;
-
-  const { rows } = await pool.query(query, [clinic_id]);
-  return rows;
-}
-
-/**
- * Auditoría por registro específico
- */
-async function listarAuditoriaPorRegistro(tabla, registro_id) {
-  const query = `
-    SELECT *
-    FROM auditoria
-    WHERE tabla = $1
-      AND registro_id = $2
-    ORDER BY fecha DESC;
-  `;
-
-  const { rows } = await pool.query(query, [
-    tabla,
-    registro_id
-  ]);
-
-  return rows;
-}
-/**
- * Búsqueda avanzada de auditoría
- * Todos los filtros son opcionales (excepto clinic_id)
- */
-async function buscarAuditoria({
-  clinic_id,
-  usuario_id,
-  accion,
-  tabla,
-  descripcion,
-  fecha_desde,
-  fecha_hasta,
-  texto_persona // dni, nombres, apellidos
-}) {
-  let params = [];
-  let where = [];
-  let joins = '';
-
-  // Siempre por clínica
-  params.push(clinic_id);
-  where.push(`a.clinic_id = $${params.length}`);
-
-  // Join con usuarios/personas SOLO si se necesita
-  if (usuario_id || texto_persona) {
-    joins += `
-      JOIN usuarios u ON u.id = a.usuario_id
-      JOIN personas p ON p.id = u.persona_id
+  async insert(auditoriaModel) {
+    const query = `
+      INSERT INTO auditoria (
+        clinic_id,
+        usuario_id,
+        accion,
+        tabla,
+        registro_id,
+        descripcion
+      ) VALUES ($1, $2, $3, $4, $5, $6)
+      RETURNING *
     `;
+
+    const values = [
+      this.clinicId,
+      auditoriaModel.usuario_id,
+      auditoriaModel.accion,
+      auditoriaModel.tabla,
+      auditoriaModel.registro_id,
+      auditoriaModel.descripcion
+    ];
+
+    const { rows } = await db.query(query, values);
+
+    return this.instantiate(rows[0]);
   }
 
-  if (usuario_id) {
-    params.push(usuario_id);
-    where.push(`a.usuario_id = $${params.length}`);
+  async listAll() {
+    const query = `
+      SELECT *
+      FROM auditoria
+      WHERE clinic_id = $1
+      ORDER BY fecha DESC
+    `;
+
+    const { rows } = await db.query(query, [this.clinicId]);
+
+    return rows.map(row => this.instantiate(row));
   }
 
-  if (accion) {
-    params.push(accion);
-    where.push(`a.accion = $${params.length}`);
+  async getById(id) {
+    const query = `
+      SELECT *
+      FROM auditoria
+      WHERE id = $1
+        AND clinic_id = $2
+    `;
+
+    const { rows } = await db.query(query, [
+      id,
+      this.clinicId
+    ]);
+
+    if (rows.length === 0) return null;
+
+    return this.instantiate(rows[0]);
   }
 
-  if (tabla) {
-    params.push(tabla);
-    where.push(`a.tabla = $${params.length}`);
+  async findByFilter(filter = {}) {
+    const conditions = ['a.clinic_id = $1'];
+    const values = [this.clinicId];
+    let idx = 2;
+
+    // 🔎 BÚSQUEDA TEXTUAL (ILIKE)
+    if (filter.text && filter.text.trim() !== '') {
+      const text = `%${filter.text.trim()}%`;
+
+      conditions.push(`
+        (
+          p.dni ILIKE $${idx}
+          OR p.nombres ILIKE $${idx}
+          OR p.apellido_paterno ILIKE $${idx}
+          OR p.apellido_materno ILIKE $${idx}
+          OR a.accion ILIKE $${idx}
+          OR a.tabla ILIKE $${idx}
+          OR a.descripcion ILIKE $${idx}
+        )
+      `);
+
+      values.push(text);
+      idx++;
+    }
+
+    // 📅 FECHA EXACTA (un día)
+    if (filter.fecha) {
+      conditions.push(`DATE(a.fecha) = $${idx}`);
+      values.push(filter.fecha);
+      idx++;
+    }
+
+    // 📆 RANGO DE FECHAS
+    if (filter.fechaDesde && filter.fechaHasta) {
+      conditions.push(`a.fecha BETWEEN $${idx} AND $${idx + 1}`);
+      values.push(filter.fechaDesde, filter.fechaHasta);
+      idx += 2;
+    }
+
+    const query = `
+      SELECT
+        a.*
+      FROM auditoria a
+      LEFT JOIN usuarios u ON u.id = a.usuario_id
+      LEFT JOIN personas p ON p.id = u.persona_id
+      WHERE ${conditions.join(' AND ')}
+      ORDER BY a.fecha DESC
+    `;
+
+    const { rows } = await db.query(query, values);
+
+    return rows.map(row => this.instantiate(row));
   }
 
-  if (descripcion) {
-    params.push(`%${descripcion}%`);
-    where.push(`a.descripcion ILIKE $${params.length}`);
-  }
-
-  if (texto_persona) {
-    params.push(`%${texto_persona}%`);
-    where.push(`
-      (
-        p.dni ILIKE $${params.length}
-        OR p.nombres ILIKE $${params.length}
-        OR p.apellido_paterno ILIKE $${params.length}
-        OR p.apellido_materno ILIKE $${params.length}
-      )
-    `);
-  }
-
-  if (fecha_desde) {
-    params.push(fecha_desde);
-    where.push(`a.fecha >= $${params.length}`);
-  }
-
-  if (fecha_hasta) {
-    params.push(fecha_hasta);
-    where.push(`a.fecha <= $${params.length}`);
-  }
-
-  const query = `
-    SELECT
-      a.*,
-      u.id AS usuario_id,
-      p.dni,
-      p.nombres,
-      p.apellido_paterno,
-      p.apellido_materno
-    FROM auditoria a
-    ${joins}
-    WHERE ${where.join(' AND ')}
-    ORDER BY a.fecha DESC;
-  `;
-
-  const { rows } = await pool.query(query, params);
-  return rows;
 }
 
-module.exports = {
-  registrarAuditoria,
-  listarAuditoriaPorClinica,
-  listarAuditoriaPorRegistro,
-  buscarAuditoria
-};
+module.exports = AuditoriaDAO;

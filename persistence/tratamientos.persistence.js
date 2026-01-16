@@ -1,154 +1,164 @@
-const pool = require('../dbmanager/postgres');
+const db = require('../dbmanager/postgres');
+const Tratamiento = require('../model/tratamientos.model');
 
-/**
- * Crear tratamiento (por clínica)
- */
-async function createTratamiento({
-  clinic_id,
-  nombre,
-  descripcion,
-  precio
-}) {
-  const query = `
-    INSERT INTO tratamientos (
-      clinic_id, nombre, descripcion, precio, activo
-    )
-    VALUES ($1,$2,$3,$4,true)
-    RETURNING *;
-  `;
+class TratamientosDAO {
 
-  const { rows } = await pool.query(query, [
-    clinic_id,
-    nombre,
-    descripcion,
-    precio
-  ]);
-
-  return rows[0];
-}
-/**
- * Obtener tratamiento por ID (por clínica)
- */
-async function findById(clinic_id, tratamiento_id) {
-  const query = `
-    SELECT *
-    FROM tratamientos
-    WHERE id = $1
-      AND clinic_id = $2;
-  `;
-
-  const { rows } = await pool.query(query, [
-    tratamiento_id,
-    clinic_id
-  ]);
-
-  return rows[0] || null;
-}
-/**
- * Listar tratamientos por clínica
- */
-async function findAllByClinic(clinic_id, { soloActivos = true } = {}) {
-  let query = `
-    SELECT *
-    FROM tratamientos
-    WHERE clinic_id = $1
-  `;
-
-  const values = [clinic_id];
-
-  if (soloActivos) {
-    query += ` AND activo = true`;
+  constructor(clinicId) {
+    if (!clinicId) {
+      throw new Error('clinic_id es obligatorio para TratamientosDAO');
+    }
+    this.clinicId = clinicId;
   }
 
-  query += ` ORDER BY nombre ASC;`;
+  // 1️⃣ Instanciar
+  instantiate(row) {
+    if (!row) return null;
 
-  const { rows } = await pool.query(query, values);
-  return rows;
-}
-/**
- * Búsqueda de tratamientos
- * (nombre / descripción)
- */
-async function searchTratamientos(clinic_id, {
-  texto,
-  activo
-}) {
-  const conditions = [`clinic_id = $1`];
-  const values = [clinic_id];
-  let idx = 2;
-
-  if (activo !== undefined) {
-    conditions.push(`activo = $${idx}`);
-    values.push(activo);
-    idx++;
+    return new Tratamiento({
+      id: row.id ?? null,
+      clinic_id: row.clinic_id ?? null,
+      nombre: row.nombre ?? null,
+      descripcion: row.descripcion ?? null,
+      precio: row.precio ?? null,
+      activo: row.activo ?? true
+    });
   }
 
-  if (texto) {
-    conditions.push(`
-      (
-        nombre ILIKE $${idx}
-        OR descripcion ILIKE $${idx}
-      )
-    `);
-    values.push(`%${texto}%`);
-    idx++;
+  // 2️⃣ Crear tratamiento
+  async insert(model) {
+    const query = `
+      INSERT INTO tratamientos (
+        clinic_id,
+        nombre,
+        descripcion,
+        precio,
+        activo
+      ) VALUES ($1, $2, $3, $4, $5)
+      RETURNING *
+    `;
+
+    const values = [
+      this.clinicId,
+      model.nombre,
+      model.descripcion,
+      model.precio,
+      model.activo ?? true
+    ];
+
+    const { rows } = await db.query(query, values);
+    return this.instantiate(rows[0]);
   }
 
-  const query = `
-    SELECT *
-    FROM tratamientos
-    WHERE ${conditions.join(' AND ')}
-    ORDER BY nombre ASC;
-  `;
+  // 3️⃣ Update catálogo
+  async update(model) {
+    if (!model.id) {
+      throw new Error('id es obligatorio para actualizar tratamiento');
+    }
 
-  const { rows } = await pool.query(query, values);
-  return rows;
-}
-/**
- * Actualizar tratamiento
- */
-async function updateTratamiento(clinic_id, tratamiento_id, data) {
-  const fields = [];
-  const values = [];
-  let idx = 1;
+    const query = `
+      UPDATE tratamientos
+      SET
+        nombre = $1,
+        descripcion = $2,
+        precio = $3
+      WHERE id = $4
+        AND clinic_id = $5
+      RETURNING *
+    `;
 
-  for (const key in data) {
-    fields.push(`${key} = $${idx}`);
-    values.push(data[key]);
-    idx++;
+    const values = [
+      model.nombre,
+      model.descripcion,
+      model.precio,
+      model.id,
+      this.clinicId
+    ];
+
+    const { rows } = await db.query(query, values);
+    if (rows.length === 0) return null;
+
+    return this.instantiate(rows[0]);
   }
 
-  values.push(tratamiento_id, clinic_id);
+  // 4️⃣ Activar / desactivar tratamiento
+  async setActivo(id, activo) {
+    const query = `
+      UPDATE tratamientos
+      SET activo = $1
+      WHERE id = $2
+        AND clinic_id = $3
+      RETURNING *
+    `;
 
-  const query = `
-    UPDATE tratamientos
-    SET ${fields.join(', ')}
-    WHERE id = $${idx}
-      AND clinic_id = $${idx + 1}
-    RETURNING *;
-  `;
+    const { rows } = await db.query(query, [activo, id, this.clinicId]);
+    if (rows.length === 0) return null;
 
-  const { rows } = await pool.query(query, values);
-  return rows[0];
+    return this.instantiate(rows[0]);
+  }
+
+  // 5️⃣ Obtener tratamiento por ID
+  async getById(id) {
+    const query = `
+      SELECT *
+      FROM tratamientos
+      WHERE id = $1
+        AND clinic_id = $2
+    `;
+
+    const { rows } = await db.query(query, [id, this.clinicId]);
+    if (rows.length === 0) return null;
+
+    return this.instantiate(rows[0]);
+  }
+
+  // 6️⃣ Listar tratamientos
+  async listAll({ incluirInactivos = false } = {}) {
+    const conditions = ['clinic_id = $1'];
+    const values = [this.clinicId];
+
+    if (!incluirInactivos) {
+      conditions.push('activo = true');
+    }
+
+    const query = `
+      SELECT *
+      FROM tratamientos
+      WHERE ${conditions.join(' AND ')}
+      ORDER BY nombre ASC
+    `;
+
+    const { rows } = await db.query(query, values);
+    return rows.map(row => this.instantiate(row));
+  }
+
+  // 7️⃣ Buscar tratamientos
+  async findByFilter(filter = {}) {
+    const conditions = ['clinic_id = $1'];
+    const values = [this.clinicId];
+    let idx = 2;
+
+    if (filter.nombre && filter.nombre.trim() !== '') {
+      conditions.push(`nombre ILIKE $${idx}`);
+      values.push(`%${filter.nombre.trim()}%`);
+      idx++;
+    }
+
+    if (typeof filter.activo === 'boolean') {
+      conditions.push(`activo = $${idx}`);
+      values.push(filter.activo);
+      idx++;
+    }
+
+    const query = `
+      SELECT *
+      FROM tratamientos
+      WHERE ${conditions.join(' AND ')}
+      ORDER BY nombre ASC
+    `;
+
+    const { rows } = await db.query(query, values);
+    return rows.map(row => this.instantiate(row));
+  }
 }
-/**
- * Soft delete de tratamiento
- */
-async function disableTratamiento(clinic_id, tratamiento_id) {
-  const query = `
-    UPDATE tratamientos
-    SET activo = false
-    WHERE id = $1
-      AND clinic_id = $2;
-  `;
 
-  await pool.query(query, [tratamiento_id, clinic_id]);
-}
-module.exports = {
-  createTratamiento,
-  findById,
-  findAllByClinic,
-  searchTratamientos,
-  updateTratamiento,
-  disableTratamiento
-};
+module.exports = TratamientosDAO;

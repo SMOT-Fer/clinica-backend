@@ -1,130 +1,129 @@
-const pool = require('../db');
+const db = require('../dbmanager/postgres');
+const HistorialClinico = require('../model/historial_clinico.model');
 
-/**
- * Crear historial clínico
- */
-async function createHistorialClinico({
-  clinic_id,
-  paciente_id,
-  cita_id,
-  observaciones,
-  diagnostico
-}) {
-  const query = `
-    INSERT INTO historial_clinico (
-      clinic_id,
-      paciente_id,
-      cita_id,
-      observaciones,
-      diagnostico
-    )
-    VALUES ($1, $2, $3, $4, $5)
-    RETURNING *;
-  `;
+class HistorialClinicoDAO {
 
-  const { rows } = await pool.query(query, [
-    clinic_id,
-    paciente_id,
-    cita_id,
-    observaciones || null,
-    diagnostico || null
-  ]);
+  constructor(clinicId) {
+    if (!clinicId) {
+      throw new Error('clinic_id es obligatorio para HistorialClinicoDAO');
+    }
+    this.clinicId = clinicId;
+  }
 
-  return rows[0];
+  // 1️⃣ Instanciar (uso interno)
+  instantiate(row) {
+    if (!row) return null;
+
+    return new HistorialClinico({
+      id: row.id ?? null,
+      clinic_id: row.clinic_id ?? null,
+      paciente_id: row.paciente_id ?? null,
+      cita_id: row.cita_id ?? null,
+      observaciones: row.observaciones ?? null,
+      diagnostico: row.diagnostico ?? null,
+      created_at: row.created_at ?? null
+    });
+  }
+
+  // 2️⃣ Insertar historial clínico (al finalizar atención)
+  async insert(model) {
+    const query = `
+      INSERT INTO historial_clinico (
+        clinic_id,
+        paciente_id,
+        cita_id,
+        observaciones,
+        diagnostico
+      ) VALUES ($1, $2, $3, $4, $5)
+      RETURNING *
+    `;
+
+    const values = [
+      this.clinicId,
+      model.paciente_id,
+      model.cita_id,
+      model.observaciones,
+      model.diagnostico
+    ];
+
+    const { rows } = await db.query(query, values);
+    return this.instantiate(rows[0]);
+  }
+
+  // 3️⃣ Update (correcciones clínicas)
+  async update(model) {
+    if (!model.id) {
+      throw new Error('id es obligatorio para actualizar historial clínico');
+    }
+
+    const query = `
+      UPDATE historial_clinico
+      SET
+        observaciones = $1,
+        diagnostico = $2
+      WHERE id = $3
+        AND clinic_id = $4
+      RETURNING *
+    `;
+
+    const values = [
+      model.observaciones,
+      model.diagnostico,
+      model.id,
+      this.clinicId
+    ];
+
+    const { rows } = await db.query(query, values);
+    if (rows.length === 0) return null;
+
+    return this.instantiate(rows[0]);
+  }
+
+  // 4️⃣ Obtener historial clínico por ID
+  async getById(id) {
+    const query = `
+      SELECT *
+      FROM historial_clinico
+      WHERE id = $1
+        AND clinic_id = $2
+    `;
+
+    const { rows } = await db.query(query, [id, this.clinicId]);
+    if (rows.length === 0) return null;
+
+    return this.instantiate(rows[0]);
+  }
+
+  // 5️⃣ Buscar historial clínico (por paciente y/o cita)
+  async findByFilter(filter = {}) {
+    const conditions = ['clinic_id = $1'];
+    const values = [this.clinicId];
+    let idx = 2;
+
+    if (filter.paciente_id) {
+      conditions.push(`paciente_id = $${idx++}`);
+      values.push(filter.paciente_id);
+    }
+
+    if (filter.cita_id) {
+      conditions.push(`cita_id = $${idx++}`);
+      values.push(filter.cita_id);
+    }
+
+    if (!filter.paciente_id && !filter.cita_id) {
+      throw new Error('Debe especificar paciente_id o cita_id para buscar historial clínico');
+    }
+
+    const query = `
+      SELECT *
+      FROM historial_clinico
+      WHERE ${conditions.join(' AND ')}
+      ORDER BY created_at DESC
+    `;
+
+    const { rows } = await db.query(query, values);
+    return rows.map(row => this.instantiate(row));
+  }
 }
 
-/**
- * Listar historial clínico por paciente
- */
-async function listHistorialByPaciente(paciente_id) {
-  const query = `
-    SELECT *
-    FROM historial_clinico
-    WHERE paciente_id = $1
-    ORDER BY created_at DESC;
-  `;
-
-  const { rows } = await pool.query(query, [paciente_id]);
-  return rows;
-}
-
-/**
- * Obtener historial clínico por cita
- */
-async function getHistorialByCita(cita_id) {
-  const query = `
-    SELECT *
-    FROM historial_clinico
-    WHERE cita_id = $1;
-  `;
-
-  const { rows } = await pool.query(query, [cita_id]);
-  return rows[0];
-}
-/**
- * Búsqueda avanzada de historial clínico
- */
-async function buscarHistorialClinico({
-  clinic_id,
-  paciente_id,
-  cita_id,
-  observaciones,
-  diagnostico,
-  fecha_desde,
-  fecha_hasta
-}) {
-  let params = [];
-  let where = [];
-
-  // Clínica obligatoria
-  params.push(clinic_id);
-  where.push(`clinic_id = $${params.length}`);
-
-  if (paciente_id) {
-    params.push(paciente_id);
-    where.push(`paciente_id = $${params.length}`);
-  }
-
-  if (cita_id) {
-    params.push(cita_id);
-    where.push(`cita_id = $${params.length}`);
-  }
-
-  if (observaciones) {
-    params.push(`%${observaciones}%`);
-    where.push(`observaciones ILIKE $${params.length}`);
-  }
-
-  if (diagnostico) {
-    params.push(`%${diagnostico}%`);
-    where.push(`diagnostico ILIKE $${params.length}`);
-  }
-
-  if (fecha_desde) {
-    params.push(fecha_desde);
-    where.push(`created_at >= $${params.length}`);
-  }
-
-  if (fecha_hasta) {
-    params.push(fecha_hasta);
-    where.push(`created_at <= $${params.length}`);
-  }
-
-  const query = `
-    SELECT *
-    FROM historial_clinico
-    WHERE ${where.join(' AND ')}
-    ORDER BY created_at DESC;
-  `;
-
-  const { rows } = await pool.query(query, params);
-  return rows;
-}
-
-module.exports = {
-  createHistorialClinico,
-  listHistorialByPaciente,
-  getHistorialByCita,
-  buscarHistorialClinico
-};
-
+module.exports = HistorialClinicoDAO;
