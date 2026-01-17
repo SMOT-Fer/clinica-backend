@@ -1,99 +1,117 @@
 const db = require('../dbmanager/postgres');
-const CondicionMedica = require('../model/condiciones_medicas.model');
 
-class CondicionesMedicasDAO {
+class CondicionesMedicasPersistence {
 
-  constructor() {}
-
-  // 1️⃣ Instanciar (uso interno)
-  instantiate(row) {
-    if (!row) return null;
-
-    return new CondicionMedica({
-      id: row.id ?? null,
-      paciente_id: row.paciente_id ?? null,
-      descripcion: row.descripcion ?? null
-    });
-  }
-
-  // 2️⃣ Insertar condición médica
-  async insert(model) {
+  /* =========================
+   * 1. CREAR CONDICIÓN MÉDICA
+   * ========================= */
+  async crear(data) {
     const query = `
       INSERT INTO condiciones_medicas (
-        paciente_id,
-        descripcion
-      ) VALUES ($1, $2)
+        nombre,
+        descripcion,
+        activa,
+        created_at
+      ) VALUES ($1, $2, true, now())
       RETURNING *
     `;
 
     const values = [
-      model.paciente_id,
-      model.descripcion
+      data.nombre,
+      data.descripcion ?? null
     ];
 
     const { rows } = await db.query(query, values);
-    return this.instantiate(rows[0]);
+    return rows[0];
   }
 
-  // 3️⃣ Update (corrección de descripción)
-  async update(model) {
-    if (!model.id) {
-      throw new Error('id es obligatorio para actualizar condición médica');
-    }
-
+  /* =========================
+   * 2. OBTENER POR ID
+   * ========================= */
+  async obtenerPorId(id) {
     const query = `
-      UPDATE condiciones_medicas
-      SET descripcion = $1
-      WHERE id = $2
-      RETURNING *
-    `;
-
-    const { rows } = await db.query(query, [
-      model.descripcion,
-      model.id
-    ]);
-
-    if (rows.length === 0) return null;
-    return this.instantiate(rows[0]);
-  }
-
-  // 4️⃣ Delete (solo errores)
-  async delete(id) {
-    const query = `
-      DELETE FROM condiciones_medicas
+      SELECT *
+      FROM condiciones_medicas
       WHERE id = $1
     `;
 
-    const result = await db.query(query, [id]);
-    return result.rowCount === 1;
+    const { rows } = await db.query(query, [id]);
+    return rows[0] || null;
   }
 
-  // 5️⃣ Buscar condiciones por paciente y descripción
-  async findByFilter(filter = {}) {
-    if (!filter.paciente_id) {
-      throw new Error('paciente_id es obligatorio para buscar condiciones médicas');
+  /* =========================
+   * 3. BUSCAR / LISTAR
+   * (buscador en tiempo real)
+   * ========================= */
+  async buscar(filtros = {}) {
+    const condiciones = [];
+    const values = [];
+    let idx = 1;
+
+    // Buscador por nombre
+    if (filtros.nombre) {
+      condiciones.push(`nombre ILIKE $${idx++}`);
+      values.push(`%${filtros.nombre}%`);
     }
 
-    const conditions = ['paciente_id = $1'];
-    const values = [filter.paciente_id];
-    let idx = 2;
-
-    if (filter.descripcion && filter.descripcion.trim() !== '') {
-      conditions.push(`descripcion ILIKE $${idx}`);
-      values.push(`%${filter.descripcion.trim()}%`);
-      idx++;
+    // Filtro por estado
+    if (typeof filtros.activa === 'boolean') {
+      condiciones.push(`activa = $${idx++}`);
+      values.push(filtros.activa);
     }
+
+    const where = condiciones.length
+      ? `WHERE ${condiciones.join(' AND ')}`
+      : '';
 
     const query = `
       SELECT *
       FROM condiciones_medicas
-      WHERE ${conditions.join(' AND ')}
-      ORDER BY id ASC
+      ${where}
+      ORDER BY nombre ASC
     `;
 
     const { rows } = await db.query(query, values);
-    return rows.map(row => this.instantiate(row));
+    return rows;
+  }
+
+  /* =========================
+   * 4. ACTUALIZAR CONDICIÓN
+   * ========================= */
+  async actualizar(id, data) {
+    const campos = [];
+    const values = [];
+    let idx = 1;
+
+    if (data.nombre) {
+      campos.push(`nombre = $${idx++}`);
+      values.push(data.nombre);
+    }
+
+    if (data.descripcion !== undefined) {
+      campos.push(`descripcion = $${idx++}`);
+      values.push(data.descripcion);
+    }
+
+    if (typeof data.activa === 'boolean') {
+      campos.push(`activa = $${idx++}`);
+      values.push(data.activa);
+    }
+
+    if (campos.length === 0) return null;
+
+    const query = `
+      UPDATE condiciones_medicas
+      SET ${campos.join(', ')}
+      WHERE id = $${idx}
+      RETURNING *
+    `;
+
+    values.push(id);
+
+    const { rows } = await db.query(query, values);
+    return rows[0] || null;
   }
 }
 
-module.exports = CondicionesMedicasDAO;
+module.exports = CondicionesMedicasPersistence;

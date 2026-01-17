@@ -1,28 +1,11 @@
 const db = require('../dbmanager/postgres');
-const Clinica = require('../model/clinicas.model');
 
-class ClinicasDAO {
+class ClinicasPersistence {
 
-  constructor() {}
-
-  // 1️⃣ Instanciar (uso interno)
-  instantiate(row) {
-    if (!row) return null;
-
-    return new Clinica({
-      id: row.id ?? null,
-      nombre: row.nombre ?? null,
-      ruc: row.ruc ?? null,
-      direccion: row.direccion ?? null,
-      telefono: row.telefono ?? null,
-      plan: row.plan ?? 'free',
-      activa: row.activa ?? true,
-      created_at: row.created_at ?? null
-    });
-  }
-
-  // 2️⃣ Crear clínica (onboarding)
-  async insert(model) {
+  /* =========================
+   * 1. CREAR CLÍNICA
+   * ========================= */
+  async crear(data) {
     const query = `
       INSERT INTO clinicas (
         nombre,
@@ -30,74 +13,28 @@ class ClinicasDAO {
         direccion,
         telefono,
         plan,
-        activa
-      ) VALUES ($1, $2, $3, $4, $5, $6)
+        activa,
+        created_at
+      ) VALUES ($1, $2, $3, $4, $5, true, now())
       RETURNING *
     `;
 
     const values = [
-      model.nombre,
-      model.ruc,
-      model.direccion,
-      model.telefono,
-      model.plan ?? 'free',
-      model.activa ?? true
+      data.nombre,
+      data.ruc,
+      data.direccion ?? null,
+      data.telefono ?? null,
+      data.plan
     ];
 
     const { rows } = await db.query(query, values);
-    return this.instantiate(rows[0]);
+    return rows[0];
   }
 
-  // 3️⃣ Update administrativo
-  async update(model) {
-    if (!model.id) {
-      throw new Error('id es obligatorio para actualizar clínica');
-    }
-
-    const query = `
-      UPDATE clinicas
-      SET
-        nombre = $1,
-        ruc = $2,
-        direccion = $3,
-        telefono = $4,
-        plan = $5
-      WHERE id = $6
-      RETURNING *
-    `;
-
-    const values = [
-      model.nombre,
-      model.ruc,
-      model.direccion,
-      model.telefono,
-      model.plan,
-      model.id
-    ];
-
-    const { rows } = await db.query(query, values);
-    if (rows.length === 0) return null;
-
-    return this.instantiate(rows[0]);
-  }
-
-  // 4️⃣ Activar / desactivar clínica (soft delete)
-  async setActiva(id, activa) {
-    const query = `
-      UPDATE clinicas
-      SET activa = $1
-      WHERE id = $2
-      RETURNING *
-    `;
-
-    const { rows } = await db.query(query, [activa, id]);
-    if (rows.length === 0) return null;
-
-    return this.instantiate(rows[0]);
-  }
-
-  // 5️⃣ Obtener clínica por ID
-  async getById(id) {
+  /* =========================
+   * 2. OBTENER CLÍNICA POR ID
+   * ========================= */
+  async obtenerPorId(id) {
     const query = `
       SELECT *
       FROM clinicas
@@ -105,62 +42,103 @@ class ClinicasDAO {
     `;
 
     const { rows } = await db.query(query, [id]);
-    if (rows.length === 0) return null;
-
-    return this.instantiate(rows[0]);
+    return rows[0] || null;
   }
 
-  // 6️⃣ Listar todas las clínicas (super admin)
-  async listAll() {
-    const query = `
-      SELECT *
-      FROM clinicas
-      ORDER BY created_at DESC
-    `;
-
-    const { rows } = await db.query(query);
-    return rows.map(row => this.instantiate(row));
-  }
-
-  // 7️⃣ Buscar clínicas (búsqueda administrativa simple)
-  async findByFilter(filter = {}) {
-    const conditions = [];
+  /* =========================
+   * 3. BUSCAR / LISTAR CLÍNICAS
+   * (buscador en tiempo real)
+   * ========================= */
+  async buscar(filtros = {}) {
+    const condiciones = [];
     const values = [];
     let idx = 1;
 
-    if (filter.nombre) {
-      conditions.push(`nombre ILIKE $${idx++}`);
-      values.push(`%${filter.nombre}%`);
+    // Buscador por nombre
+    if (filtros.nombre) {
+      condiciones.push(`nombre ILIKE $${idx++}`);
+      values.push(`%${filtros.nombre}%`);
     }
 
-    if (filter.ruc) {
-      conditions.push(`ruc = $${idx++}`);
-      values.push(filter.ruc);
+    // Filtro por estado (activa / inactiva)
+    if (typeof filtros.activa === 'boolean') {
+      condiciones.push(`activa = $${idx++}`);
+      values.push(filtros.activa);
     }
 
-    if (filter.plan) {
-      conditions.push(`plan = $${idx++}`);
-      values.push(filter.plan);
+    // Filtro por plan (opcional)
+    if (filtros.plan) {
+      condiciones.push(`plan = $${idx++}`);
+      values.push(filtros.plan);
     }
 
-    if (typeof filter.activa === 'boolean') {
-      conditions.push(`activa = $${idx++}`);
-      values.push(filter.activa);
-    }
-
-    const whereClause =
-      conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    const where = condiciones.length
+      ? `WHERE ${condiciones.join(' AND ')}`
+      : '';
 
     const query = `
       SELECT *
       FROM clinicas
-      ${whereClause}
-      ORDER BY created_at DESC
+      ${where}
+      ORDER BY nombre ASC
     `;
 
     const { rows } = await db.query(query, values);
-    return rows.map(row => this.instantiate(row));
+    return rows;
+  }
+
+  /* =========================
+   * 4. ACTUALIZAR CLÍNICA
+   * ========================= */
+  async actualizar(id, data) {
+    const campos = [];
+    const values = [];
+    let idx = 1;
+
+    if (data.nombre) {
+      campos.push(`nombre = $${idx++}`);
+      values.push(data.nombre);
+    }
+
+    if (data.ruc !== undefined) {
+      campos.push(`ruc = $${idx++}`);
+      values.push(data.ruc);
+    }
+
+    if (data.direccion !== undefined) {
+      campos.push(`direccion = $${idx++}`);
+      values.push(data.direccion);
+    }
+
+    if (data.telefono !== undefined) {
+      campos.push(`telefono = $${idx++}`);
+      values.push(data.telefono);
+    }
+
+    if (data.plan) {
+      campos.push(`plan = $${idx++}`);
+      values.push(data.plan);
+    }
+
+    if (typeof data.activa === 'boolean') {
+      campos.push(`activa = $${idx++}`);
+      values.push(data.activa);
+    }
+
+    if (campos.length === 0) return null;
+
+    const query = `
+      UPDATE clinicas
+      SET ${campos.join(', ')}
+      WHERE id = $${idx}
+      RETURNING *
+    `;
+
+    values.push(id);
+
+    const { rows } = await db.query(query, values);
+    return rows[0] || null;
   }
 }
 
-module.exports = ClinicasDAO;
+module.exports = ClinicasPersistence;

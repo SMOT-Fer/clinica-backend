@@ -1,11 +1,12 @@
 // /utils/hash.util.js
 const bcrypt = require('bcryptjs');
 
-const SALT_ROUNDS = parseInt(process.env.BCRYPT_SALT_ROUNDS, 10);
-
-if (!SALT_ROUNDS) {
-  throw new Error('BCRYPT_SALT_ROUNDS no está definido en el .env');
-}
+/**
+ * Número de rondas para bcrypt
+ * - Usa variable de entorno si existe
+ * - Fallback seguro para local / scripts
+ */
+const SALT_ROUNDS = Number(process.env.BCRYPT_SALT_ROUNDS) || 10;
 
 /**
  * Hashea una contraseña en texto plano
