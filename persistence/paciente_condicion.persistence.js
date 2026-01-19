@@ -35,7 +35,6 @@ class PacienteCondicionesPersistence {
         pc.id,
         pc.descripcion_libre,
         pc.created_at,
-        cm.id     AS condicion_id,
         cm.nombre AS condicion_nombre
       FROM paciente_condiciones pc
       INNER JOIN condiciones_medicas cm

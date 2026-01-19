@@ -32,9 +32,7 @@ class PacientesPersistence {
     const query = `
       SELECT
         p.id          AS paciente_id,
-        p.clinic_id,
         p.created_at,
-        per.id        AS persona_id,
         per.dni,
         per.nombres,
         per.apellido_paterno,
@@ -85,7 +83,6 @@ class PacientesPersistence {
       SELECT
         p.id          AS paciente_id,
         p.created_at,
-        per.id        AS persona_id,
         per.dni,
         per.nombres,
         per.apellido_paterno,

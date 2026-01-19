@@ -20,7 +20,7 @@ class CitaTratamientosPersistence {
       tratamiento_id,
       precio_aplicado
     ];
-
+    
     const { rows } = await db.query(query, values);
     return rows[0];
   }

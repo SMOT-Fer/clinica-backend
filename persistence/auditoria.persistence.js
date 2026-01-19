@@ -37,8 +37,15 @@ class AuditoriaPersistence {
    * ========================= */
   async obtenerPorId(id) {
     const query = `
-      SELECT *
-      FROM auditoria
+      SELECT 
+      a.*,
+      p.dni,
+      p.nombres,
+      p.apellido_paterno,
+      p.apellido_materno
+      FROM auditoria a
+      LEFT JOIN usuarios u ON u.id = a.usuario_id
+      LEFT JOIN personas p ON p.id = u.persona_id
       WHERE id = $1
     `;
 

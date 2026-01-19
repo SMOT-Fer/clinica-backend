@@ -10,7 +10,6 @@ class CondicionesMedicasPersistence {
       INSERT INTO condiciones_medicas (
         nombre,
         descripcion,
-        activa,
         created_at
       ) VALUES ($1, $2, true, now())
       RETURNING *
@@ -54,10 +53,10 @@ class CondicionesMedicasPersistence {
       values.push(`%${filtros.nombre}%`);
     }
 
-    // Filtro por estado
-    if (typeof filtros.activa === 'boolean') {
-      condiciones.push(`activa = $${idx++}`);
-      values.push(filtros.activa);
+    // Filtro por descripcion
+    if (filtros.descripcion) {
+      condiciones.push(`descripcion ILIKE $${idx++}`);
+      values.push(filtros.descripcion);
     }
 
     const where = condiciones.length
@@ -91,11 +90,6 @@ class CondicionesMedicasPersistence {
     if (data.descripcion !== undefined) {
       campos.push(`descripcion = $${idx++}`);
       values.push(data.descripcion);
-    }
-
-    if (typeof data.activa === 'boolean') {
-      campos.push(`activa = $${idx++}`);
-      values.push(data.activa);
     }
 
     if (campos.length === 0) return null;

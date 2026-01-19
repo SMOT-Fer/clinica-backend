@@ -38,9 +38,23 @@ class UsuariosPersistence {
    * ========================= */
   async obtenerPorId(id) {
     const query = `
-      SELECT *
-      FROM usuarios
+      SELECT
+        u.id,
+        u.email,
+        u.rol,
+        u.activo,
+        u.online,
+        u.created_at,
+        u.last_seen,
+        u.online,
+        p.dni,
+        p.nombres,
+        p.apellido_paterno,
+        p.apellido_materno
+      FROM usuarios u
+      INNER JOIN personas p ON p.id = u.persona_id
       WHERE id = $1
+      ORDER BY p.apellido_paterno ASC, p.nombres ASC
     `;
 
     const { rows } = await db.query(query, [id]);
@@ -109,7 +123,9 @@ class UsuariosPersistence {
         u.rol,
         u.activo,
         u.online,
+        u.created_at,
         u.last_seen,
+        u.online,
         p.dni,
         p.nombres,
         p.apellido_paterno,

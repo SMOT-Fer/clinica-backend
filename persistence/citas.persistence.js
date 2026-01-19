@@ -39,8 +39,20 @@ class CitasPersistence {
    * ========================= */
   async obtenerPorId(id) {
     const query = `
-      SELECT *
-      FROM citas
+      SELECT c.fecha,
+        c.hora,
+        c.estado,
+        c.detalles,
+        c.created_at,
+        pp.nombres AS paciente_nombres,
+        pp.apellido_paterno AS paciente_apellido_paterno,
+        pd.nombres AS doctor_nombres,
+        pd.apellido_paterno AS doctor_apellido_paterno
+      FROM citas c
+      INNER JOIN pacientes pa ON pa.id = c.paciente_id
+      INNER JOIN personas pp ON pp.id = pa.persona_id
+      INNER JOIN usuarios u ON u.id = c.doctor_id
+      INNER JOIN personas pd ON pd.id = u.persona_id
       WHERE id = $1
     `;
 
@@ -126,7 +138,11 @@ class CitasPersistence {
 
     const query = `
       SELECT
-        c.*,
+        c.fecha,
+        c.hora,
+        c.estado,
+        c.detalles,
+        c.created_at,
         pp.nombres AS paciente_nombres,
         pp.apellido_paterno AS paciente_apellido_paterno,
         pd.nombres AS doctor_nombres,
