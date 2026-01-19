@@ -1,107 +1,106 @@
 const db = require('../dbmanager/postgres');
-const Paciente = require('../model/pacientes.model');
 
-class PacientesDAO {
+class PacientesPersistence {
 
-  constructor(clinicId) {
-    if (!clinicId) {
-      throw new Error('clinic_id es obligatorio para PacientesDAO');
-    }
-    this.clinicId = clinicId;
-  }
-
-  // 1️⃣ Instanciar (uso interno)
-  instantiate(row) {
-    if (!row) return null;
-
-    return new Paciente({
-      id: row.id ?? null,
-      clinic_id: row.clinic_id ?? null,
-      persona_id: row.persona_id ?? null,
-      created_at: row.created_at ?? null
-    });
-  }
-
-  // 2️⃣ Registrar paciente (persona + clínica)
-  async insert(model) {
+  /* =========================
+   * CREAR PACIENTE
+   * ========================= */
+  async crear(data) {
     const query = `
       INSERT INTO pacientes (
         clinic_id,
-        persona_id
-      ) VALUES ($1, $2)
+        persona_id,
+        created_at
+      ) VALUES ($1, $2, now())
       RETURNING *
     `;
 
     const values = [
-      this.clinicId,
-      model.persona_id
+      data.clinic_id,
+      data.persona_id
     ];
 
     const { rows } = await db.query(query, values);
-    return this.instantiate(rows[0]);
+    return rows[0];
   }
 
-  // 3️⃣ Obtener paciente por ID
-  async getById(id) {
+  /* =========================
+   * OBTENER PACIENTE POR ID
+   * (siempre con persona)
+   * ========================= */
+  async obtenerPorId(id) {
     const query = `
-      SELECT *
-      FROM pacientes
-      WHERE id = $1
-        AND clinic_id = $2
+      SELECT
+        p.id          AS paciente_id,
+        p.clinic_id,
+        p.created_at,
+        per.id        AS persona_id,
+        per.dni,
+        per.nombres,
+        per.apellido_paterno,
+        per.apellido_materno,
+        per.fecha_nacimiento,
+        per.sexo
+      FROM pacientes p
+      INNER JOIN personas per ON per.id = p.persona_id
+      WHERE p.id = $1
     `;
 
-    const { rows } = await db.query(query, [id, this.clinicId]);
-    if (rows.length === 0) return null;
-
-    return this.instantiate(rows[0]);
+    const { rows } = await db.query(query, [id]);
+    return rows[0] || null;
   }
 
-  // 4️⃣ Listar todos los pacientes de la clínica
-  async listAll() {
-    const query = `
-      SELECT *
-      FROM pacientes
-      WHERE clinic_id = $1
-      ORDER BY created_at DESC
-    `;
+  /* =========================
+   * BUSCAR / LISTAR PACIENTES
+   * (clinic_id obligatorio)
+   * ========================= */
+  async buscar(filtros = {}) {
+    if (!filtros.clinic_id) {
+      throw new Error('clinic_id es obligatorio para buscar pacientes');
+    }
 
-    const { rows } = await db.query(query, [this.clinicId]);
-    return rows.map(row => this.instantiate(row));
-  }
+    const condiciones = [];
+    const values = [];
+    let idx = 1;
 
-  // 5️⃣ Buscar pacientes por datos de persona (LIKE)
-  async findByFilter(filter = {}) {
-    const conditions = ['p.clinic_id = $1'];
-    const values = [this.clinicId];
-    let idx = 2;
+    // Scope obligatorio
+    condiciones.push(`p.clinic_id = $${idx++}`);
+    values.push(filtros.clinic_id);
 
-    if (filter.persona_text && filter.persona_text.trim() !== '') {
-      const text = `%${filter.persona_text.trim()}%`;
-
-      conditions.push(`
+    // Buscador por persona
+    if (filtros.texto) {
+      condiciones.push(`
         (
-          pe.dni ILIKE $${idx}
-          OR pe.nombres ILIKE $${idx}
-          OR pe.apellido_paterno ILIKE $${idx}
-          OR pe.apellido_materno ILIKE $${idx}
+          per.dni ILIKE $${idx}
+          OR per.nombres ILIKE $${idx}
+          OR per.apellido_paterno ILIKE $${idx}
+          OR per.apellido_materno ILIKE $${idx}
         )
       `);
-
-      values.push(text);
+      values.push(`%${filtros.texto}%`);
       idx++;
     }
 
     const query = `
-      SELECT p.*
+      SELECT
+        p.id          AS paciente_id,
+        p.created_at,
+        per.id        AS persona_id,
+        per.dni,
+        per.nombres,
+        per.apellido_paterno,
+        per.apellido_materno,
+        per.fecha_nacimiento,
+        per.sexo
       FROM pacientes p
-      INNER JOIN personas pe ON pe.id = p.persona_id
-      WHERE ${conditions.join(' AND ')}
-      ORDER BY p.created_at DESC
+      INNER JOIN personas per ON per.id = p.persona_id
+      WHERE ${condiciones.join(' AND ')}
+      ORDER BY per.apellido_paterno ASC, per.nombres ASC
     `;
 
     const { rows } = await db.query(query, values);
-    return rows.map(row => this.instantiate(row));
+    return rows;
   }
 }
 
-module.exports = PacientesDAO;
+module.exports = PacientesPersistence;

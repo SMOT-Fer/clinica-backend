@@ -1,35 +1,11 @@
 const db = require('../dbmanager/postgres');
-const Usuario = require('../model/usuarios.model');
 
-class UsuariosDAO {
+class UsuariosPersistence {
 
-  constructor(clinicId) {
-    if (!clinicId) {
-      throw new Error('clinic_id es obligatorio para UsuariosDAO');
-    }
-    this.clinicId = clinicId;
-  }
-
-  // 1️⃣ Instanciar
-  instantiate(row) {
-    if (!row) return null;
-
-    return new Usuario({
-      id: row.id ?? null,
-      clinic_id: row.clinic_id ?? null,
-      persona_id: row.persona_id ?? null,
-      email: row.email ?? null,
-      password_hash: row.password_hash ?? null,
-      rol: row.rol ?? null,
-      activo: row.activo ?? true,
-      last_seen: row.last_seen ?? null,
-      online: row.online ?? false,
-      created_at: row.created_at ?? null
-    });
-  }
-
-  // 2️⃣ Crear usuario
-  async insert(model) {
+  /* =========================
+   * 1. CREAR USUARIO
+   * ========================= */
+  async crear(data) {
     const query = `
       INSERT INTO usuarios (
         clinic_id,
@@ -38,201 +14,185 @@ class UsuariosDAO {
         password_hash,
         rol,
         activo,
+        created_at,
+        last_seen,
         online
-      ) VALUES ($1, $2, $3, $4, $5, true, false)
+      ) VALUES ($1, $2, $3, $4, $5, true, now(), null, false)
       RETURNING *
     `;
 
     const values = [
-      this.clinicId,
-      model.persona_id,
-      model.email,
-      model.password_hash,
-      model.rol
+      data.clinic_id,
+      data.persona_id,
+      data.email,
+      data.password_hash,
+      data.rol
     ];
 
     const { rows } = await db.query(query, values);
-    return this.instantiate(rows[0]);
+    return rows[0];
   }
 
-  // 3️⃣ Update administrativo
-  async update(model) {
-    if (!model.id) {
-      throw new Error('id es obligatorio para actualizar usuario');
-    }
-
-    const query = `
-      UPDATE usuarios
-      SET
-        email = $1,
-        rol = $2,
-        activo = $3
-      WHERE id = $4
-        AND clinic_id = $5
-      RETURNING *
-    `;
-
-    const values = [
-      model.email,
-      model.rol,
-      model.activo,
-      model.id,
-      this.clinicId
-    ];
-
-    const { rows } = await db.query(query, values);
-    if (rows.length === 0) return null;
-
-    return this.instantiate(rows[0]);
-  }
-
-  // 4️⃣ Cambiar contraseña
-  async updatePassword(id, password_hash) {
-    const query = `
-      UPDATE usuarios
-      SET password_hash = $1
-      WHERE id = $2
-        AND clinic_id = $3
-      RETURNING *
-    `;
-
-    const { rows } = await db.query(query, [
-      password_hash,
-      id,
-      this.clinicId
-    ]);
-
-    if (rows.length === 0) return null;
-    return this.instantiate(rows[0]);
-  }
-
-  // 5️⃣ Activar / desactivar usuario
-  async setActivo(id, activo) {
-    const query = `
-      UPDATE usuarios
-      SET activo = $1
-      WHERE id = $2
-        AND clinic_id = $3
-      RETURNING *
-    `;
-
-    const { rows } = await db.query(query, [activo, id, this.clinicId]);
-    if (rows.length === 0) return null;
-
-    return this.instantiate(rows[0]);
-  }
-
-  // 6️⃣ Actualizar estado online
-  async updateOnlineStatus(id, online) {
-    const query = `
-      UPDATE usuarios
-      SET
-        online = $1,
-        last_seen = CASE
-          WHEN $1 = false THEN now()
-          ELSE last_seen
-        END
-      WHERE id = $2
-        AND clinic_id = $3
-      RETURNING *
-    `;
-
-    const { rows } = await db.query(query, [online, id, this.clinicId]);
-    if (rows.length === 0) return null;
-
-    return this.instantiate(rows[0]);
-  }
-
-  // 7️⃣ Obtener usuario por ID
-  async getById(id) {
+  /* =========================
+   * 2. OBTENER USUARIO POR ID
+   * ========================= */
+  async obtenerPorId(id) {
     const query = `
       SELECT *
       FROM usuarios
       WHERE id = $1
-        AND clinic_id = $2
     `;
 
-    const { rows } = await db.query(query, [id, this.clinicId]);
-    if (rows.length === 0) return null;
-
-    return this.instantiate(rows[0]);
+    const { rows } = await db.query(query, [id]);
+    return rows[0] || null;
   }
 
-  // 8️⃣ Obtener usuario por email (LOGIN)
-  async getByEmail(email) {
+  /* =========================
+   * 3. OBTENER USUARIO POR EMAIL (LOGIN)
+   * ========================= */
+  async obtenerPorEmail(email) {
     const query = `
       SELECT *
       FROM usuarios
       WHERE email = $1
-        AND clinic_id = $2
-        AND activo = true
-    `;
-
-    const { rows } = await db.query(query, [email, this.clinicId]);
-    if (rows.length === 0) return null;
-
-    return this.instantiate(rows[0]);
-  }
-
-  // 9️⃣ Buscar usuarios
-  async findByFilter(filter = {}) {
-    const conditions = ['u.clinic_id = $1'];
-    const values = [this.clinicId];
-    let idx = 2;
-
-    if (filter.rol) {
-      conditions.push(`u.rol = $${idx++}`);
-      values.push(filter.rol);
-    }
-
-    if (typeof filter.activo === 'boolean') {
-      conditions.push(`u.activo = $${idx++}`);
-      values.push(filter.activo);
-    }
-
-    if (filter.persona_text && filter.persona_text.trim() !== '') {
-      const text = `%${filter.persona_text.trim()}%`;
-
-      conditions.push(`
-        (
-          p.dni ILIKE $${idx}
-          OR p.nombres ILIKE $${idx}
-          OR p.apellido_paterno ILIKE $${idx}
-          OR p.apellido_materno ILIKE $${idx}
-        )
-      `);
-
-      values.push(text);
-      idx++;
-    }
-
-    const query = `
-      SELECT u.*
-      FROM usuarios u
-      INNER JOIN personas p ON p.id = u.persona_id
-      WHERE ${conditions.join(' AND ')}
-      ORDER BY u.created_at DESC
-    `;
-
-    const { rows } = await db.query(query, values);
-    return rows.map(row => this.instantiate(row));
-  }
-
-  // SOLO para login (NO multi-tenant todavía)
-  static async getByEmailGlobal(email) {
-    const query = `
-      SELECT *
-      FROM usuarios
-      WHERE email = $1
-        AND activo = true
     `;
 
     const { rows } = await db.query(query, [email]);
-    if (rows.length === 0) return null;
-
-    return rows[0]; // row crudo (incluye clinic_id)
+    return rows[0] || null;
   }
 
+  /* =========================
+   * 4. BUSCAR / LISTAR USUARIOS
+   * ========================= */
+  async buscar(filtros = {}) {
+    const condiciones = [];
+    const values = [];
+    let idx = 1;
+
+    if (filtros.clinic_id) {
+      condiciones.push(`u.clinic_id = $${idx++}`);
+      values.push(filtros.clinic_id);
+    }
+
+    if (filtros.rol) {
+      condiciones.push(`u.rol = $${idx++}`);
+      values.push(filtros.rol);
+    }
+
+    if (typeof filtros.activo === 'boolean') {
+      condiciones.push(`u.activo = $${idx++}`);
+      values.push(filtros.activo);
+    }
+
+    if (filtros.texto) {
+      condiciones.push(`
+        (
+          u.email ILIKE $${idx}
+          OR p.nombres ILIKE $${idx}
+          OR p.apellido_paterno ILIKE $${idx}
+          OR p.apellido_materno ILIKE $${idx}
+          OR p.dni ILIKE $${idx}
+        )
+      `);
+      values.push(`%${filtros.texto}%`);
+      idx++;
+    }
+
+    const where = condiciones.length
+      ? `WHERE ${condiciones.join(' AND ')}`
+      : '';
+
+    const query = `
+      SELECT
+        u.id,
+        u.email,
+        u.rol,
+        u.activo,
+        u.online,
+        u.last_seen,
+        p.dni,
+        p.nombres,
+        p.apellido_paterno,
+        p.apellido_materno
+      FROM usuarios u
+      INNER JOIN personas p ON p.id = u.persona_id
+      ${where}
+      ORDER BY p.apellido_paterno ASC, p.nombres ASC
+    `;
+
+    const { rows } = await db.query(query, values);
+    return rows;
+  }
+
+  /* =========================
+   * 5. ACTUALIZAR DATOS ADMINISTRATIVOS
+   * ========================= */
+  async actualizar(id, data) {
+    const campos = [];
+    const values = [];
+    let idx = 1;
+
+    if (data.email) {
+      campos.push(`email = $${idx++}`);
+      values.push(data.email);
+    }
+
+    if (data.rol) {
+      campos.push(`rol = $${idx++}`);
+      values.push(data.rol);
+    }
+
+    if (typeof data.activo === 'boolean') {
+      campos.push(`activo = $${idx++}`);
+      values.push(data.activo);
+    }
+
+    if (campos.length === 0) return null;
+
+    const query = `
+      UPDATE usuarios
+      SET ${campos.join(', ')}
+      WHERE id = $${idx}
+      RETURNING *
+    `;
+
+    values.push(id);
+
+    const { rows } = await db.query(query, values);
+    return rows[0] || null;
+  }
+
+  /* =========================
+   * 6. ACTUALIZAR PASSWORD
+   * ========================= */
+  async actualizarPassword(id, password_hash) {
+    const query = `
+      UPDATE usuarios
+      SET password_hash = $1
+      WHERE id = $2
+      RETURNING *
+    `;
+
+    const { rows } = await db.query(query, [password_hash, id]);
+    return rows[0] || null;
+  }
+
+  /* =========================
+   * 7. ACTUALIZAR PRESENCIA
+   * ========================= */
+  async actualizarPresencia(id, online) {
+    const query = `
+      UPDATE usuarios
+      SET
+        online = $1,
+        last_seen = now()
+      WHERE id = $2
+      RETURNING *
+    `;
+
+    const { rows } = await db.query(query, [online, id]);
+    return rows[0] || null;
+  }
 }
 
-module.exports = UsuariosDAO;
+module.exports = UsuariosPersistence;

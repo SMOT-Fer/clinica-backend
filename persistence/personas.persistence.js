@@ -1,31 +1,39 @@
 const db = require('../dbmanager/postgres');
-const Persona = require('../model/personas.model');
 
-class PersonasDAO {
+class PersonasPersistence {
 
-  constructor() {}
+  /* =========================
+   * 1. OBTENER PERSONA POR DNI
+   * ========================= */
+  async obtenerPorDni(dni) {
+    const query = `
+      SELECT *
+      FROM personas
+      WHERE dni = $1
+    `;
 
-  // 1️⃣ Instanciar (uso interno)
-  instantiate(row) {
-    if (!row) return null;
-
-    return new Persona({
-      id: row.id ?? null,
-      dni: row.dni ?? null,
-      nombres: row.nombres ?? null,
-      apellido_paterno: row.apellido_paterno ?? null,
-      apellido_materno: row.apellido_materno ?? null,
-      telefono: row.telefono ?? null,
-      fecha_nacimiento: row.fecha_nacimiento ?? null,
-      sexo: row.sexo ?? null,
-      origen_datos: row.origen_datos ?? 'api',
-      created_at: row.created_at ?? null,
-      ultima_actualizacion: row.ultima_actualizacion ?? null
-    });
+    const { rows } = await db.query(query, [dni]);
+    return rows[0] || null;
   }
 
-  // 2️⃣ Insertar persona (API o manual)
-  async insert(model) {
+  /* =========================
+   * 2. OBTENER PERSONA POR ID
+   * ========================= */
+  async obtenerPorId(id) {
+    const query = `
+      SELECT *
+      FROM personas
+      WHERE id = $1
+    `;
+
+    const { rows } = await db.query(query, [id]);
+    return rows[0] || null;
+  }
+
+  /* =========================
+   * 3. CREAR PERSONA
+   * ========================= */
+  async crear(data) {
     const query = `
       INSERT INTO personas (
         dni,
@@ -35,96 +43,100 @@ class PersonasDAO {
         telefono,
         fecha_nacimiento,
         sexo,
-        origen_datos
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        origen_datos,
+        created_at,
+        ultima_actualizacion
+      ) VALUES (
+        $1, $2, $3, $4, $5, $6, $7, $8, now(), now()
+      )
       RETURNING *
     `;
 
     const values = [
-      model.dni,
-      model.nombres,
-      model.apellido_paterno,
-      model.apellido_materno,
-      model.telefono,
-      model.fecha_nacimiento,
-      model.sexo,
-      model.origen_datos ?? 'api'
+      data.dni,
+      data.nombres,
+      data.apellido_paterno,
+      data.apellido_materno,
+      data.telefono ?? null,
+      data.fecha_nacimiento ?? null,
+      data.sexo ?? null,
+      data.origen_datos ?? 'manual'
     ];
 
     const { rows } = await db.query(query, values);
-    return this.instantiate(rows[0]);
+    return rows[0];
   }
 
-  // 3️⃣ Update (correcciones)
-  async update(model) {
-    if (!model.id) {
-      throw new Error('id es obligatorio para actualizar persona');
+  /* =========================
+   * 4. ACTUALIZAR PERSONA
+   * ========================= */
+  async actualizar(id, data) {
+    const campos = [];
+    const values = [];
+    let idx = 1;
+
+    if (data.nombres) {
+      campos.push(`nombres = $${idx++}`);
+      values.push(data.nombres);
     }
+
+    if (data.apellido_paterno) {
+      campos.push(`apellido_paterno = $${idx++}`);
+      values.push(data.apellido_paterno);
+    }
+
+    if (data.apellido_materno) {
+      campos.push(`apellido_materno = $${idx++}`);
+      values.push(data.apellido_materno);
+    }
+
+    if (data.telefono !== undefined) {
+      campos.push(`telefono = $${idx++}`);
+      values.push(data.telefono);
+    }
+
+    if (data.fecha_nacimiento !== undefined) {
+      campos.push(`fecha_nacimiento = $${idx++}`);
+      values.push(data.fecha_nacimiento);
+    }
+
+    if (data.sexo !== undefined) {
+      campos.push(`sexo = $${idx++}`);
+      values.push(data.sexo);
+    }
+
+    if (data.origen_datos) {
+      campos.push(`origen_datos = $${idx++}`);
+      values.push(data.origen_datos);
+    }
+
+    if (campos.length === 0) return null;
 
     const query = `
       UPDATE personas
       SET
-        nombres = $1,
-        apellido_paterno = $2,
-        apellido_materno = $3,
-        telefono = $4,
+        ${campos.join(', ')},
         ultima_actualizacion = now()
-      WHERE id = $5
+      WHERE id = $${idx}
       RETURNING *
     `;
 
-    const values = [
-      model.nombres,
-      model.apellido_paterno,
-      model.apellido_materno,
-      model.telefono,
-      model.id
-    ];
+    values.push(id);
 
     const { rows } = await db.query(query, values);
-    if (rows.length === 0) return null;
-
-    return this.instantiate(rows[0]);
+    return rows[0] || null;
   }
 
-  // 4️⃣ Obtener persona por ID
-  async getById(id) {
-    const query = `
-      SELECT *
-      FROM personas
-      WHERE id = $1
-    `;
-
-    const { rows } = await db.query(query, [id]);
-    if (rows.length === 0) return null;
-
-    return this.instantiate(rows[0]);
-  }
-
-  // 5️⃣ Obtener persona por DNI (CLAVE)
-  async getByDni(dni) {
-    const query = `
-      SELECT *
-      FROM personas
-      WHERE dni = $1
-    `;
-
-    const { rows } = await db.query(query, [dni]);
-    if (rows.length === 0) return null;
-
-    return this.instantiate(rows[0]);
-  }
-
-  // 6️⃣ Buscar personas (buscador)
-  async findByFilter(filter = {}) {
-    const conditions = [];
+  /* =========================
+   * 5. BUSCAR PERSONAS (ADMIN)
+   * ========================= */
+  async buscar(filtros = {}) {
+    const condiciones = [];
     const values = [];
     let idx = 1;
 
-    if (filter.texto && filter.texto.trim() !== '') {
-      const text = `%${filter.texto.trim()}%`;
-
-      conditions.push(`
+    if (filtros.texto) {
+      condiciones.push(`
         (
           dni ILIKE $${idx}
           OR nombres ILIKE $${idx}
@@ -132,25 +144,24 @@ class PersonasDAO {
           OR apellido_materno ILIKE $${idx}
         )
       `);
-
-      values.push(text);
+      values.push(`%${filtros.texto}%`);
       idx++;
     }
 
-    if (conditions.length === 0) {
-      throw new Error('Debe enviar texto para buscar personas');
-    }
+    const where = condiciones.length
+      ? `WHERE ${condiciones.join(' AND ')}`
+      : '';
 
     const query = `
       SELECT *
       FROM personas
-      WHERE ${conditions.join(' AND ')}
-      ORDER BY created_at DESC
+      ${where}
+      ORDER BY apellido_paterno ASC, nombres ASC
     `;
 
     const { rows } = await db.query(query, values);
-    return rows.map(row => this.instantiate(row));
+    return rows;
   }
 }
 
-module.exports = PersonasDAO;
+module.exports = PersonasPersistence;

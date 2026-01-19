@@ -1,31 +1,11 @@
 const db = require('../dbmanager/postgres');
-const Tratamiento = require('../model/tratamientos.model');
 
-class TratamientosDAO {
+class TratamientosPersistence {
 
-  constructor(clinicId) {
-    if (!clinicId) {
-      throw new Error('clinic_id es obligatorio para TratamientosDAO');
-    }
-    this.clinicId = clinicId;
-  }
-
-  // 1️⃣ Instanciar
-  instantiate(row) {
-    if (!row) return null;
-
-    return new Tratamiento({
-      id: row.id ?? null,
-      clinic_id: row.clinic_id ?? null,
-      nombre: row.nombre ?? null,
-      descripcion: row.descripcion ?? null,
-      precio: row.precio ?? null,
-      activo: row.activo ?? true
-    });
-  }
-
-  // 2️⃣ Crear tratamiento
-  async insert(model) {
+  /* =========================
+   * 1. CREAR TRATAMIENTO
+   * ========================= */
+  async crear(data) {
     const query = `
       INSERT INTO tratamientos (
         clinic_id,
@@ -33,132 +13,128 @@ class TratamientosDAO {
         descripcion,
         precio,
         activo
-      ) VALUES ($1, $2, $3, $4, $5)
+      ) VALUES ($1, $2, $3, $4, true)
       RETURNING *
     `;
 
     const values = [
-      this.clinicId,
-      model.nombre,
-      model.descripcion,
-      model.precio,
-      model.activo ?? true
+      data.clinic_id,
+      data.nombre,
+      data.descripcion ?? null,
+      data.precio
     ];
 
     const { rows } = await db.query(query, values);
-    return this.instantiate(rows[0]);
+    return rows[0];
   }
 
-  // 3️⃣ Update catálogo
-  async update(model) {
-    if (!model.id) {
-      throw new Error('id es obligatorio para actualizar tratamiento');
-    }
-
-    const query = `
-      UPDATE tratamientos
-      SET
-        nombre = $1,
-        descripcion = $2,
-        precio = $3
-      WHERE id = $4
-        AND clinic_id = $5
-      RETURNING *
-    `;
-
-    const values = [
-      model.nombre,
-      model.descripcion,
-      model.precio,
-      model.id,
-      this.clinicId
-    ];
-
-    const { rows } = await db.query(query, values);
-    if (rows.length === 0) return null;
-
-    return this.instantiate(rows[0]);
-  }
-
-  // 4️⃣ Activar / desactivar tratamiento
-  async setActivo(id, activo) {
-    const query = `
-      UPDATE tratamientos
-      SET activo = $1
-      WHERE id = $2
-        AND clinic_id = $3
-      RETURNING *
-    `;
-
-    const { rows } = await db.query(query, [activo, id, this.clinicId]);
-    if (rows.length === 0) return null;
-
-    return this.instantiate(rows[0]);
-  }
-
-  // 5️⃣ Obtener tratamiento por ID
-  async getById(id) {
+  /* =========================
+   * 2. OBTENER POR ID
+   * ========================= */
+  async obtenerPorId(id) {
     const query = `
       SELECT *
       FROM tratamientos
       WHERE id = $1
-        AND clinic_id = $2
     `;
 
-    const { rows } = await db.query(query, [id, this.clinicId]);
-    if (rows.length === 0) return null;
-
-    return this.instantiate(rows[0]);
+    const { rows } = await db.query(query, [id]);
+    return rows[0] || null;
   }
 
-  // 6️⃣ Listar tratamientos
-  async listAll({ incluirInactivos = false } = {}) {
-    const conditions = ['clinic_id = $1'];
-    const values = [this.clinicId];
+  /* =========================
+   * 3. BUSCAR / LISTAR TRATAMIENTOS
+   * ========================= */
+  async buscar(filtros = {}) {
+    if (!filtros.clinic_id) {
+      throw new Error('clinic_id es obligatorio para buscar tratamientos');
+    }
 
-    if (!incluirInactivos) {
-      conditions.push('activo = true');
+    const condiciones = [];
+    const values = [];
+    let idx = 1;
+
+    // Scope por clínica
+    condiciones.push(`clinic_id = $${idx++}`);
+    values.push(filtros.clinic_id);
+
+    // Texto (nombre / descripción)
+    if (filtros.texto) {
+      condiciones.push(`
+        (
+          nombre ILIKE $${idx}
+          OR descripcion ILIKE $${idx}
+        )
+      `);
+      values.push(`%${filtros.texto}%`);
+      idx++;
+    }
+
+    // Precio (búsqueda humana)
+    if (filtros.precio) {
+      condiciones.push(`CAST(precio AS TEXT) ILIKE $${idx++}`);
+      values.push(`%${filtros.precio}%`);
+    }
+
+    // Activo / inactivo
+    if (typeof filtros.activo === 'boolean') {
+      condiciones.push(`activo = $${idx++}`);
+      values.push(filtros.activo);
     }
 
     const query = `
       SELECT *
       FROM tratamientos
-      WHERE ${conditions.join(' AND ')}
+      WHERE ${condiciones.join(' AND ')}
       ORDER BY nombre ASC
     `;
 
     const { rows } = await db.query(query, values);
-    return rows.map(row => this.instantiate(row));
+    return rows;
   }
 
-  // 7️⃣ Buscar tratamientos
-  async findByFilter(filter = {}) {
-    const conditions = ['clinic_id = $1'];
-    const values = [this.clinicId];
-    let idx = 2;
+  /* =========================
+   * 4. ACTUALIZAR TRATAMIENTO
+   * ========================= */
+  async actualizar(id, data) {
+    const campos = [];
+    const values = [];
+    let idx = 1;
 
-    if (filter.nombre && filter.nombre.trim() !== '') {
-      conditions.push(`nombre ILIKE $${idx}`);
-      values.push(`%${filter.nombre.trim()}%`);
-      idx++;
+    if (data.nombre) {
+      campos.push(`nombre = $${idx++}`);
+      values.push(data.nombre);
     }
 
-    if (typeof filter.activo === 'boolean') {
-      conditions.push(`activo = $${idx}`);
-      values.push(filter.activo);
-      idx++;
+    if (data.descripcion !== undefined) {
+      campos.push(`descripcion = $${idx++}`);
+      values.push(data.descripcion);
     }
+
+    if (data.precio !== undefined) {
+      campos.push(`precio = $${idx++}`);
+      values.push(data.precio);
+    }
+
+    if (typeof data.activo === 'boolean') {
+      campos.push(`activo = $${idx++}`);
+      values.push(data.activo);
+    }
+
+    if (campos.length === 0) return null;
 
     const query = `
-      SELECT *
-      FROM tratamientos
-      WHERE ${conditions.join(' AND ')}
-      ORDER BY nombre ASC
+      UPDATE tratamientos
+      SET ${campos.join(', ')}
+      WHERE id = $${idx}
+      RETURNING *
     `;
 
+    values.push(id);
+
     const { rows } = await db.query(query, values);
-    return rows.map(row => this.instantiate(row));
+    return rows[0] || null;
   }
 }
 
-module.exports = TratamientosDAO;
+module.exports = TratamientosPersistence;

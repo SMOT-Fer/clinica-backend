@@ -69,6 +69,12 @@ class CitasPersistence {
       values.push(filtros.doctor_id);
     }
 
+    // paciente
+    if (filtros.paciente_id) {
+      condiciones.push(`c.paciente_id = $${idx++}`);
+      values.push(filtros.paciente_id);
+    }
+
     // Persona (paciente o doctor)
     if (filtros.persona) {
       condiciones.push(`
