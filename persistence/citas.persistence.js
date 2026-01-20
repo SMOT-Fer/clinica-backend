@@ -203,6 +203,22 @@ class CitasPersistence {
     const { rows } = await db.query(query, values);
     return rows[0] || null;
   }
+
+  /**
+   * Obtiene citas pendientes cuya fecha/hora + minutos < NOW()
+   */
+  async obtenerCitasExpiradas(minutos) {
+    const query = `
+      SELECT *
+      FROM citas
+      WHERE estado = 'pendiente'
+        AND (fecha + hora::time + ($1 || ' minutes')::interval) < NOW()
+    `;
+
+    const { rows } = await db.query(query, [minutos]);
+    return rows;
+  }
+
 }
 
 module.exports = CitasPersistence;

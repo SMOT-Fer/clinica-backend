@@ -121,6 +121,24 @@ class UserSessionsPersistence {
     const { rows } = await db.query(query, values);
     return rows;
   }
+
+  /**
+   * Marca como inactivas las sesiones cuyo último ping
+   * supera el tiempo de inactividad permitido
+   */
+  async cerrarSesionesInactivas(minutos) {
+    const query = `
+      UPDATE user_sessions
+      SET activo = false
+      WHERE activo = true
+        AND last_ping < NOW() - ($1 || ' minutes')::interval
+      RETURNING id
+    `;
+
+    const { rowCount } = await db.query(query, [minutos]);
+    return rowCount;
+  }
+
 }
 
 module.exports = UserSessionsPersistence;

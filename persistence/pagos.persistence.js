@@ -121,7 +121,7 @@ class PagosPersistence {
 
     // Fecha especifica
     if (filtros.fecha) {
-      condiciones-push(`p.fecha = $${idx++}`);
+      condiciones.push(`p.fecha = $${idx++}`);
       values.push(`%${filtros.fecha}%`);
     }
 

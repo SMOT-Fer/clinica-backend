@@ -98,6 +98,18 @@ class PacientesPersistence {
     const { rows } = await db.query(query, values);
     return rows;
   }
+
+  /* =========================
+  * ELIMINAR PACIENTE
+  * ========================= */
+  async eliminar(id) {
+    const query = `
+      DELETE FROM pacientes
+      WHERE id = $1
+    `;
+    await db.query(query, [id]);
+    return true;
+  }
 }
 
 module.exports = PacientesPersistence;

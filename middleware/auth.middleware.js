@@ -1,39 +1,30 @@
-// /middleware/auth.middleware.js
-
+// middleware/auth.socket.middleware.js
 const authBusiness = require('../business/auth.business');
 
-module.exports = async function authMiddleware(req, res, next) {
+module.exports = async (socket, next) => {
   try {
-    const authHeader = req.headers['authorization'];
+    const token =
+      socket.handshake.auth?.token ||
+      socket.handshake.headers?.authorization?.split(' ')[1];
 
-    if (!authHeader) {
-      return res.status(401).json({ message: 'Session token requerido' });
-    }
-
-    const [type, token] = authHeader.split(' ');
-
-    if (type !== 'Bearer' || !token) {
-      return res.status(401).json({ message: 'Formato de token inválido' });
+    if (!token) {
+      throw new Error('Session token requerido');
     }
 
     // 🔐 Validación real contra BD
     const sesion = await authBusiness.validarSesion(token);
 
-    /**
-     * Contexto mínimo para business
-     * (NO permisos, NO decisiones aquí)
-     */
-    req.session = {
+    // Contexto que usará TODO el backend
+    socket.session = {
       session_id: sesion.id,
       usuario_id: sesion.usuario_id,
       clinic_id: sesion.clinic_id,
-      socket_id: sesion.socket_id
+      rol: sesion.rol,
+      socket_id: socket.id
     };
 
     next();
   } catch (error) {
-    return res.status(401).json({
-      message: error.message || 'Sesión inválida'
-    });
+    next(new Error(error.message || 'Sesión inválida'));
   }
 };

@@ -1,52 +1,58 @@
 // server.js
+
 require('dotenv').config();
 
 const express = require('express');
-const cors = require('cors');
-
-const wsRouter = require('./ws');
+const http = require('http');
+const { Server } = require('socket.io');
 
 const app = express();
+const server = http.createServer(app);
 
-/* =========================
-   Middlewares globales
-========================= */
-app.use(cors());                  // ajustable luego
-app.use(express.json());          // body parser
-app.use(express.urlencoded({ extended: true }));
-
-/* =========================
-   Health check (Render)
-========================= */
-app.get('/', (req, res) => {
-  res.json({
-    status: 'OK',
-    service: 'Backend Clinica SaaS',
-    timestamp: new Date()
-  });
+// =========================
+// SOCKET.IO
+// =========================
+const io = new Server(server, {
+  cors: {
+    origin: '*', // 🔧 en producción puedes restringir luego
+    methods: ['GET', 'POST']
+  }
 });
 
-/* =========================
-   Web Services
-========================= */
-app.use('/ws', wsRouter);
+// =========================
+// WS
+// =========================
+require('./ws')(io);
 
-/* =========================
-   Error handler final
-========================= */
-app.use((err, req, res, next) => {
-  console.error('[SERVER ERROR]', err);
-  res.status(500).json({
-    success: false,
-    message: 'Error interno del servidor'
-  });
+// =========================
+// JOBS
+// =========================
+const cancelarCitasJob = require('./jobs/cancelar_citas_expiradas.job');
+const limpiarSesionesJob = require('./jobs/limpiar_sesiones.job');
+
+// cada 5 minutos
+setInterval(cancelarCitasJob.ejecutar, 5 * 60 * 1000);
+
+// cada 10 minutos
+setInterval(limpiarSesionesJob.ejecutar, 10 * 60 * 1000);
+
+// =========================
+// HARDENING BÁSICO
+// =========================
+process.on('unhandledRejection', (err) => {
+  console.error('Unhandled Rejection:', err);
 });
 
-/* =========================
-   Server listen
-========================= */
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught Exception:', err);
+});
+
+// =========================
+// SERVER
+// =========================
 const PORT = process.env.PORT || 3000;
 
-app.listen(PORT, () => {
-  console.log(`🚀 Backend corriendo en puerto ${PORT}`);
+server.listen(PORT, () => {
+  console.log(`🚀 Server + WS corriendo en puerto ${PORT}`);
+  console.log(`🌱 NODE_ENV=${process.env.NODE_ENV}`);
 });

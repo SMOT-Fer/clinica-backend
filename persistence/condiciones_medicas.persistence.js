@@ -106,6 +106,21 @@ class CondicionesMedicasPersistence {
     const { rows } = await db.query(query, values);
     return rows[0] || null;
   }
+
+  /* =========================
+  * 5. ELIMINAR CONDICIÓN MÉDICA
+  * ========================= */
+  async eliminar(id) {
+    const query = `
+      DELETE FROM condiciones_medicas
+      WHERE id = $1
+      RETURNING *
+    `;
+
+    const { rows } = await db.query(query, [id]);
+    return rows[0] || null;
+}
+
 }
 
 module.exports = CondicionesMedicasPersistence;
