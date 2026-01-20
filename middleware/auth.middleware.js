@@ -8,7 +8,8 @@ module.exports = async (socket, next) => {
       socket.handshake.headers?.authorization?.split(' ')[1];
 
     if (!token) {
-      throw new Error('Session token requerido');
+      socket.session = null;
+      return next(); // permite conexión SIN token
     }
 
     // 🔐 Validación real contra BD
