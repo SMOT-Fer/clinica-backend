@@ -1,6 +1,6 @@
 // ws/index.js
 
-const authSocketMiddleware = require('../middlewares/auth.middleware');
+const authSocketMiddleware = require('../middleware/auth.middleware');
 
 const authWS = require('./auth.ws');
 const auditoriaWS = require('./auditoria.ws');
