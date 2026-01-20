@@ -2,6 +2,7 @@
 
 const authSocketMiddleware = require('../middleware/auth.middleware');
 
+// WS handlers
 const authWS = require('./auth.ws');
 const auditoriaWS = require('./auditoria.ws');
 const citasWS = require('./citas.ws');
@@ -15,13 +16,28 @@ const tratamientosWS = require('./tratamientos.ws');
 const usuariosWS = require('./usuarios.ws');
 
 module.exports = (io) => {
+  // 🔐 Middleware global (permite sin token, valida si existe)
   io.use(authSocketMiddleware);
 
   io.on('connection', (socket) => {
+    console.log(`[WS] conectado | socket:${socket.id}`);
+
+    // =========================
+    // AUTH (SIEMPRE)
+    // =========================
+    authWS(socket, io);
+
+    // =========================
+    // SI NO HAY SESIÓN → SOLO AUTH
+    // =========================
+    if (!socket.session) {
+      return;
+    }
+
     const { usuario_id, rol, clinic_id } = socket.session;
 
     // =========================
-    // ROOMS (CLAVE PARA REALTIME)
+    // ROOMS (solo si hay sesión)
     // =========================
     socket.join(`user:${usuario_id}`);
 
@@ -34,13 +50,12 @@ module.exports = (io) => {
     }
 
     console.log(
-      `[WS] conectado | user:${usuario_id} | rol:${rol} | clinic:${clinic_id} | socket:${socket.id}`
+      `[WS] autenticado | user:${usuario_id} | rol:${rol} | clinic:${clinic_id} | socket:${socket.id}`
     );
 
     // =========================
-    // REGISTRO DE WS
+    // WS PROTEGIDOS
     // =========================
-    authWS(socket, io);
     auditoriaWS(socket, io);
     citasWS(socket, io);
     clinicasWS(socket, io);
