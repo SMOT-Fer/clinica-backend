@@ -66,7 +66,7 @@ async function login({ email, password, socket_id }) {
 
   const session = await userSessionsPersistence.crear({
     usuario_id: usuario.id,
-    clinic_id: usuario.clinic_id,
+    clinic_id: usuario.clinic_id || null,
     socket_id
   });
 
