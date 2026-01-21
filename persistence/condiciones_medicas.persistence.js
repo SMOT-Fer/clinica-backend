@@ -11,7 +11,7 @@ class CondicionesMedicasPersistence {
         nombre,
         descripcion,
         created_at
-      ) VALUES ($1, $2, true, now())
+      ) VALUES ($1, $2, now())
       RETURNING *
     `;
 
