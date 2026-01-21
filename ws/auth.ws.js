@@ -50,17 +50,27 @@ module.exports = (socket, io) => {
    * LOGOUT
    * ========================= */
   socket.on('auth:logout', async (_, cb) => {
+    console.log('🚪 EVENTO auth:logout RECIBIDO');
+    console.log('📦 socket.session:', socket.session);
+    console.log('📦 socket.data:', socket.data);
+
     try {
-      if (socket.session?.session_id) {
-        await AuthBusiness.logout(socket.session.session_id);
+      const session =
+        socket.session ||
+        socket.data?.session;
+
+      if (!session) {
+        console.log('❌ NO HAY SESIÓN EN SOCKET');
+      } else {
+        console.log('✅ CERRANDO SESSION ID:', session.id || session.session_id);
+        await AuthBusiness.logout(session.id || session.session_id);
       }
 
-      socket.session = null;
       cb({ ok: true });
-
-      socket.disconnect(true);
-    } catch (error) {
-      cb({ ok: false, error: error.message });
+    } catch (err) {
+      console.error('🔥 ERROR EN LOGOUT:', err);
+      cb({ ok: false, error: err.message });
     }
   });
+
 };
