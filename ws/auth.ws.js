@@ -1,5 +1,3 @@
-// ws/auth.ws.js
-
 const AuthBusiness = require('../business/auth.business');
 
 module.exports = (socket, io) => {
@@ -16,6 +14,15 @@ module.exports = (socket, io) => {
         password,
         socket_id: socket.id
       });
+
+      // ✅ ASOCIAR SESIÓN AL SOCKET (CLAVE)
+      socket.session = {
+        session_id: result.session_token || result.id,
+        usuario_id: result.usuario.id,
+        clinic_id: result.usuario.clinic_id,
+        rol: result.usuario.rol,
+        socket_id: socket.id
+      };
 
       cb({ ok: true, data: result });
     } catch (error) {
@@ -50,25 +57,17 @@ module.exports = (socket, io) => {
    * LOGOUT
    * ========================= */
   socket.on('auth:logout', async (_, cb) => {
-    console.log('🚪 EVENTO auth:logout RECIBIDO');
-    console.log('📦 socket.session:', socket.session);
-    console.log('📦 socket.data:', socket.data);
-
     try {
-      const session =
-        socket.session ||
-        socket.data?.session;
-
-      if (!session) {
-        console.log('❌ NO HAY SESIÓN EN SOCKET');
-      } else {
-        console.log('✅ CERRANDO SESSION ID:', session.id || session.session_id);
-        await AuthBusiness.logout(session.id || session.session_id);
+      if (!socket.session?.session_id) {
+        console.log('❌ Logout sin sesión asociada al socket');
+        return cb({ ok: true });
       }
+
+      await AuthBusiness.logout(socket.session.session_id);
 
       cb({ ok: true });
     } catch (err) {
-      console.error('🔥 ERROR EN LOGOUT:', err);
+      console.error('🔥 Error en auth:logout:', err);
       cb({ ok: false, error: err.message });
     }
   });

@@ -1,4 +1,3 @@
-// middleware/auth.socket.middleware.js
 const authBusiness = require('../business/auth.business');
 
 module.exports = async (socket, next) => {
@@ -8,14 +7,11 @@ module.exports = async (socket, next) => {
       socket.handshake.headers?.authorization?.split(' ')[1];
 
     if (!token) {
-      socket.session = null;
-      return next(); // permite conexión SIN token
+      return next(); // conexión sin sesión
     }
 
-    // 🔐 Validación real contra BD
     const sesion = await authBusiness.validarSesion(token);
 
-    // Contexto que usará TODO el backend
     socket.session = {
       session_id: sesion.id,
       usuario_id: sesion.usuario_id,
