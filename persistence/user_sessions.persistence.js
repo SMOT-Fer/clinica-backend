@@ -56,7 +56,7 @@ class UserSessionsPersistence {
       RETURNING *
     `;
 
-    const { rows } = await db.query(query, [socket_id]);
+    const { rows } = await db.query(query, [session_id]);
     return rows[0] || null;
   }
 
