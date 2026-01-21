@@ -31,16 +31,16 @@ class UserSessionsPersistence {
   /* =========================
    * 2. ACTUALIZAR PING (ACTIVIDAD)
    * ========================= */
-  async actualizarPing(socket_id) {
+  async actualizarPing(session_id) {
     const query = `
       UPDATE user_sessions
       SET last_ping = now()
-      WHERE socket_id = $1
+      WHERE id = $1
         AND activo = true
       RETURNING *
     `;
 
-    const { rows } = await db.query(query, [socket_id]);
+    const { rows } = await db.query(query, [session_id]);
     return rows[0] || null;
   }
 
@@ -57,6 +57,17 @@ class UserSessionsPersistence {
     `;
 
     const { rows } = await db.query(query, [session_id]);
+    return rows[0] || null;
+  }
+
+  async buscarPorId(session_id) {
+    const { rows } = await db.query(`
+      SELECT *
+      FROM user_sessions
+      WHERE id = $1
+        AND activo = true
+    `, [session_id]);
+
     return rows[0] || null;
   }
 

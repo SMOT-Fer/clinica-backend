@@ -49,8 +49,8 @@ function verificarSessionToken(token) {
  * LOGIN
  * ========================= */
 async function login({ email, password, socket_id }) {
-  if (!email || !password || !socket_id) {
-    throw new Error('Email, password y socket_id son obligatorios');
+  if (!email || !password) {
+    throw new Error('Credenciales inválidas');
   }
 
   const usuario = await usuariosPersistence.obtenerPorEmail(email);
