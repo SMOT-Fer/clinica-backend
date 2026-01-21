@@ -10,7 +10,7 @@ module.exports = (socket) => {
         socket_id: socket.id
       });
 
-      socket.data.session = {
+      socket.session = {
         id: result.session_id,
         usuario_id: result.usuario.id,
         clinic_id: result.usuario.clinic_id,
@@ -27,7 +27,7 @@ module.exports = (socket) => {
     try {
       const sesion = await AuthBusiness.validarSesion(token);
 
-      socket.data.session = {
+      socket.session = {
         id: sesion.id,
         usuario_id: sesion.usuario_id,
         clinic_id: sesion.clinic_id,
@@ -42,10 +42,11 @@ module.exports = (socket) => {
 
   socket.on('auth:logout', async (_, cb) => {
     try {
-      const session = socket.data.session;
+      const session = socket.session;
       if (session?.id) {
         await AuthBusiness.logout(session.id);
       }
+      socket.session = null; // limpiar en memoria
       cb({ ok: true });
     } catch (e) {
       cb({ ok: false, error: e.message });

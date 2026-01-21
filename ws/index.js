@@ -67,10 +67,15 @@ module.exports = (io) => {
     tratamientosWS(socket, io);
     usuariosWS(socket, io);
 
-    socket.on('disconnect', () => {
+    socket.on('disconnect', async () => {
+      if (socket.session?.id) {
+        await AuthBusiness.logout(socket.session.id);
+      }
+
       console.log(
         `[WS] desconectado | user:${usuario_id} | socket:${socket.id}`
       );
     });
+
   });
 };
