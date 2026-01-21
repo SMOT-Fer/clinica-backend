@@ -86,10 +86,10 @@ async function login({ email, password, socket_id }) {
 /* =========================
  * LOGOUT
  * ========================= */
-async function logout(socket_id) {
-  if (!socket_id) return;
+async function logout(session_id) {
+  if (!session_id) return;
 
-  await userSessionsPersistence.cerrarSesionPorSocket(socket_id);
+  await userSessionsPersistence.cerrarSesionPorId(session_id);
 }
 
 /* =========================

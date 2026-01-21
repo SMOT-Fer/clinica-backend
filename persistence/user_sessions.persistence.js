@@ -47,11 +47,11 @@ class UserSessionsPersistence {
   /* =========================
    * 3. CERRAR SESIÓN
    * ========================= */
-  async cerrarSesionPorSocket(socket_id) {
+  async cerrarSesionPorId(session_id) {
     const query = `
       UPDATE user_sessions
       SET activo = false
-      WHERE socket_id = $1
+      WHERE id = $1
         AND activo = true
       RETURNING *
     `;
